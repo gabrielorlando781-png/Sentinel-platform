@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SENTINEL — Dashboard</title>
+    <meta name="description" content="Painel de controle SENTINEL — histórico de alertas e relatórios.">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Outfit:wght@300;400;600;700&display=swap');
+        :root {
+            --primary: #7b2fff;
+            --danger: #ff4444;
+            --warning: #ff9800;
+            --success: #4caf50;
+            --bg: #09090d;
+            --surface: #111118;
+            --card: #16161f;
+            --border: rgba(255,255,255,0.07);
+            --text: #e0e0e0;
+            --muted: #666;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: var(--bg); color: var(--text); font-family: 'Outfit', sans-serif; min-height: 100vh; }
+
+        /* HEADER */
+        header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 0 32px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .logo { font-size: 18px; font-weight: 700; letter-spacing: 3px; }
+        .logo span { color: var(--primary); }
+        .header-right { display: flex; align-items: center; gap: 16px; font-size: 13px; }
+        .badge-admin {
+            background: linear-gradient(135deg, var(--primary), #b06aff);
+            color: #fff;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 20px;
+            letter-spacing: 1px;
+        }
+        .user-email { color: var(--muted); font-size: 12px; }
+        .btn-sm {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            font-size: 12px;
+            padding: 6px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: 0.2s;
+            font-family: 'Outfit', sans-serif;
+        }
+        .btn-sm:hover { border-color: var(--danger); color: var(--danger); }
+        .btn-primary {
+            background: var(--primary);
+            border: none;
+            color: #fff;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 8px 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            letter-spacing: 0.5px;
+            transition: 0.2s;
+            font-family: 'Outfit', sans-serif;
+        }
+        .btn-primary:hover { background: #6a1fe0; }
+
+        /* MAIN */
+        main { padding: 32px; max-width: 1400px; margin: 0 auto; }
+
+        /* STATS */
+        .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+        .stat-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px 24px;
+        }
+        .stat-label { font-size: 11px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; }
+        .stat-value { font-size: 28px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+        .stat-value.danger { color: var(--danger); }
+        .stat-value.warning { color: var(--warning); }
+        .stat-value.purple { color: var(--primary); }
+
+        /* FILTERS */
+        .filter-bar {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px 20px;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .filter-bar label { font-size: 11px; color: var(--muted); letter-spacing: 1px; }
+        .filter-bar select, .filter-bar input[type="date"] {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 7px 12px;
+            font-size: 13px;
+            font-family: 'JetBrains Mono', monospace;
+            outline: none;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .filter-bar select:focus, .filter-bar input[type="date"]:focus { border-color: var(--primary); }
+        .filter-group { display: flex; flex-direction: column; gap: 5px; }
+        .filter-spacer { flex: 1; }
+
+        /* TABLE */
+        .table-wrapper {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        thead th {
+            background: var(--surface);
+            padding: 13px 16px;
+            text-align: left;
+            font-size: 11px;
+            color: var(--muted);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+        }
+        tbody tr {
+            border-bottom: 1px solid var(--border);
+            transition: background 0.15s;
+        }
+        tbody tr:last-child { border-bottom: none; }
+        tbody tr:hover { background: rgba(123,47,255,0.05); }
+        td {
+            padding: 12px 16px;
+            font-size: 13px;
+            font-family: 'JetBrains Mono', monospace;
+            vertical-align: middle;
+        }
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        .badge-fall { background: rgba(255,68,68,0.2); color: var(--danger); border: 1px solid rgba(255,68,68,0.3); }
+        .badge-phone { background: rgba(123,47,255,0.2); color: #b06aff; border: 1px solid rgba(123,47,255,0.3); }
+        .badge-idle { background: rgba(255,152,0,0.2); color: var(--warning); border: 1px solid rgba(255,152,0,0.3); }
+        .badge-other { background: rgba(255,255,255,0.07); color: var(--muted); border: 1px solid var(--border); }
+
+        .sev-critical { color: var(--danger); font-weight: 700; }
+        .sev-high { color: #ff6b6b; }
+        .sev-medium { color: var(--warning); }
+        .sev-low { color: var(--success); }
+
+        /* THUMBNAIL */
+        .thumb-container { position: relative; display: inline-block; }
+        .thumb-container img {
+            width: 70px;
+            height: 44px;
+            object-fit: cover;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            cursor: zoom-in;
+            transition: 0.2s;
+        }
+        .thumb-container img:hover { border-color: var(--primary); }
+
+        /* ZOOM OVERLAY */
+        #zoom-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.88);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            cursor: zoom-out;
+        }
+        #zoom-overlay.active { display: flex; }
+        #zoom-overlay img { max-width: 800px; max-height: 80vh; border-radius: 12px; border: 2px solid var(--primary); }
+
+        /* EMPTY STATE */
+        .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); }
+        .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
+        .empty-state p { font-size: 14px; }
+
+        /* PAGINATION */
+        .pagination {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--muted);
+        }
+        .pagination-btns { display: flex; gap: 8px; }
+        .pagination-btns button {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 6px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            font-family: 'Outfit', sans-serif;
+            transition: 0.2s;
+        }
+        .pagination-btns button:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+        .pagination-btns button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        /* SCROLLBAR */
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+
+        /* EXPORT MODAL */
+        #export-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 500;
+            justify-content: center;
+            align-items: center;
+        }
+        #export-modal.active { display: flex; }
+        .export-box {
+            background: var(--card);
+            border: 1px solid rgba(123,47,255,0.3);
+            border-radius: 16px;
+            padding: 32px;
+            width: 380px;
+        }
+        .export-box h3 { margin-bottom: 20px; font-size: 16px; letter-spacing: 1px; }
+        .export-box label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 5px; letter-spacing: 1px; }
+        .export-box input[type="date"] {
+            width: 100%;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 14px;
+            font-family: 'JetBrains Mono', monospace;
+            outline: none;
+            margin-bottom: 16px;
+        }
+        .export-btns { display: flex; gap: 10px; margin-top: 8px; }
+        .export-btns button { flex: 1; padding: 11px; border-radius: 8px; font-family: 'Outfit', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: 0.2s; }
+        #btn-export-cancel { background: var(--surface); color: var(--muted); border: 1px solid var(--border) !important; }
+        #btn-export-cancel:hover { color: var(--text); }
+        #btn-export-confirm { background: var(--primary); color: #fff; }
+        #btn-export-confirm:hover { background: #6a1fe0; }
+
+        .loading-row td { text-align: center; padding: 40px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="logo">SENTI<span>NEL</span></div>
+    <div class="header-right">
+        <span id="badge-admin" class="badge-admin" style="display:none">⚡ ADMIN</span>
+        <span class="user-email" id="header-email"></span>
+        <button class="btn-sm" onclick="doLogout()">SAIR</button>
+    </div>
+</header>
+
+<main>
+    <div class="stats-row">
+        <div class="stat-card">
+            <div class="stat-label">Total de Alertas</div>
+            <div class="stat-value purple" id="stat-total">—</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Quedas</div>
+            <div class="stat-value danger" id="stat-falls">—</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Uso de Celular</div>
+            <div class="stat-value" style="color:#b06aff" id="stat-phone">—</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Inatividade</div>
+            <div class="stat-value warning" id="stat-idle">—</div>
+        </div>
+    </div>
+
+    <div class="filter-bar">
+        <div class="filter-group">
+            <label>TIPO</label>
+            <select id="filter-type" onchange="applyFilters()">
+                <option value="all">Todos</option>
+                <option value="QUEDA">Queda</option>
+                <option value="CELULAR">Celular</option>
+                <option value="INATIVO">Inatividade</option>
+                <option value="AUSENTE">Ausência</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>SEVERIDADE</label>
+            <select id="filter-severity" onchange="applyFilters()">
+                <option value="all">Todas</option>
+                <option value="critical">Crítica</option>
+                <option value="high">Alta</option>
+                <option value="medium">Média</option>
+                <option value="low">Baixa</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>DE</label>
+            <input type="date" id="filter-from" onchange="applyFilters()">
+        </div>
+        <div class="filter-group">
+            <label>ATÉ</label>
+            <input type="date" id="filter-to" onchange="applyFilters()">
+        </div>
+        <div class="filter-spacer"></div>
+        <button class="btn-primary" onclick="openExportModal()">⬇ EXPORTAR RELATÓRIO</button>
+        <a href="/" style="text-decoration:none"><button class="btn-sm" style="color:var(--primary);border-color:var(--primary)">◀ MONITOR</button></a>
+    </div>
+
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Data / Hora</th>
+                    <th>Tipo</th>
+                    <th>Severidade</th>
+                    <th>Confiança</th>
+                    <th id="col-user" style="display:none">Usuário</th>
+                    <th>Evidência</th>
+                    <th style="text-align:right">Ações</th>
+                </tr>
+            </thead>
+            <tbody id="alerts-body">
+                <tr class="loading-row"><td colspan="6">CARREGANDO...</td></tr>
+            </tbody>
+        </table>
+        <div class="pagination">
+            <span id="pagination-info">0 resultados</span>
+            <div class="pagination-btns">
+                <button id="btn-prev" onclick="prevPage()" disabled>← ANTERIOR</button>
+                <button id="btn-next" onclick="nextPage()" disabled>PRÓXIMO →</button>
+            </div>
+        </div>
+    </div>
+</main>
+
+<!-- ZOOM OVERLAY -->
+<div id="zoom-overlay" onclick="closeZoom()">
+    <img id="zoom-img" src="" alt="Screenshot ampliado">
+</div>
+
+<!-- EXPORT MODAL -->
+<div id="export-modal">
+    <div class="export-box">
+        <h3>📊 EXPORTAR RELATÓRIO</h3>
+        <label>DATA INICIAL</label>
+        <input type="date" id="export-from">
+        <label>DATA FINAL</label>
+        <input type="date" id="export-to">
+        <div class="export-btns">
+            <button id="btn-export-cancel" onclick="closeExportModal()">CANCELAR</button>
+            <button id="btn-export-confirm" onclick="doExport()">GERAR RELATÓRIO</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const LIMIT = 50;
+    let currentOffset = 0;
+    let totalAlerts = 0;
+    let isAdmin = false;
+    const token = localStorage.getItem('sentinel_token');
+
+    // ── Auth Guard ──────────────────────────────────────────────────────────────
+    if (!token) { location.href = '/'; }
+
+    function parseJWT(t) {
+        try { return JSON.parse(atob(t.split('.')[1])); } catch { return null; }
+    }
+
+    function doLogout() {
+        localStorage.removeItem('sentinel_token');
+        localStorage.removeItem('sentinel_user');
+        location.href = '/';
+    }
+
+    // ── Init ─────────────────────────────────────────────────────────────────────
+    async function init() {
+        const payload = parseJWT(token);
+        if (!payload) { doLogout(); return; }
+
+        // Validate with server
+        try {
+            const r = await fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + token } });
+            if (!r.ok) { doLogout(); return; }
+            const user = await r.json();
+            isAdmin = user.role === 'admin';
+            document.getElementById('header-email').textContent = user.email;
+            if (isAdmin) {
+                document.getElementById('badge-admin').style.display = 'inline-block';
+                document.getElementById('col-user').style.display = '';
+            }
+        } catch { doLogout(); return; }
+
+        // Set default date range (last 30 days)
+        const today = new Date();
+        const from = new Date(today);
+        from.setDate(from.getDate() - 30);
+        document.getElementById('filter-from').value = from.toISOString().split('T')[0];
+        document.getElementById('filter-to').value = today.toISOString().split('T')[0];
+        document.getElementById('export-from').value = from.toISOString().split('T')[0];
+        document.getElementById('export-to').value = today.toISOString().split('T')[0];
+
+        await loadAlerts();
+        await loadStats();
+    }
+
+    // ── Load Alerts ──────────────────────────────────────────────────────────────
+    async function loadAlerts() {
+        const body = document.getElementById('alerts-body');
+        body.innerHTML = '<tr class="loading-row"><td colspan="6">CARREGANDO...</td></tr>';
+
+        const params = buildParams();
+        try {
+            const r = await fetch('/api/alerts?' + params.toString(), {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            if (!r.ok) throw new Error('Erro ao buscar alertas');
+            const { alerts, total } = await r.json();
+            totalAlerts = total || 0;
+            renderTable(alerts || []);
+            updatePagination();
+        } catch (e) {
+            body.innerHTML = `<tr class="loading-row"><td colspan="6" style="color:var(--danger)">${e.message}</td></tr>`;
+        }
+    }
+
+    function buildParams() {
+        const p = new URLSearchParams();
+        const type = document.getElementById('filter-type').value;
+        const severity = document.getElementById('filter-severity').value;
+        const from = document.getElementById('filter-from').value;
+        const to = document.getElementById('filter-to').value;
+        if (type !== 'all') p.set('type', type);
+        if (severity !== 'all') p.set('severity', severity);
+        if (from) p.set('from', from);
+        if (to) p.set('to', to);
+        p.set('limit', LIMIT);
+        p.set('offset', currentOffset);
+        return p;
+    }
+
+    function renderTable(alerts) {
+        const body = document.getElementById('alerts-body');
+        if (!alerts.length) {
+            body.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="icon">🔍</div><p>Nenhum alerta encontrado para os filtros selecionados.</p></div></td></tr>`;
+            return;
+        }
+        body.innerHTML = alerts.map(a => {
+            const dt = new Date(a.created_at).toLocaleString('pt-BR');
+            const typeBadge = getTypeBadge(a.type);
+            const sevClass = `sev-${a.severity || 'medium'}`;
+            const sevLabel = (a.severity || 'medium').toUpperCase();
+            const conf = a.confidence || '—';
+            const thumb = a.screenshot_url
+                ? `<div class="thumb-container"><img src="${a.screenshot_url}" alt="screenshot" loading="lazy" onclick="openZoom('${a.screenshot_url}')"></div>`
+                : '<span style="color:var(--muted);font-size:11px">SEM IMAGEM</span>';
+            const userCell = isAdmin
+                ? `<td style="font-size:11px;color:var(--muted)">${(a.users && (a.users.email || a.users.name)) || a.user_id}</td>`
+                : '';
+            return `<tr style="border-left:3px solid ${getSeverityColor(a.severity)}">
+                <td>${dt}</td>
+                <td>${typeBadge}</td>
+                <td class="${sevClass}">${sevLabel}</td>
+                <td>${conf}%</td>
+                ${userCell}
+                <td>${thumb}</td>
+                <td style="text-align:right">
+                    <button class="btn-sm" style="padding:4px 8px; font-size:10px;" onclick="deleteAlert('${a.id}')">🗑️</button>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    function getTypeBadge(type) {
+        if (!type) return '<span class="badge badge-other">OUTRO</span>';
+        if (type.includes('QUEDA') || type.includes('FALL')) return `<span class="badge badge-fall">${type}</span>`;
+        if (type.includes('CELULAR') || type.includes('PHONE')) return `<span class="badge badge-phone">${type}</span>`;
+        if (type.includes('INATIV') || type.includes('IDLE') || type.includes('AUSENT')) return `<span class="badge badge-idle">${type}</span>`;
+        return `<span class="badge badge-other">${type}</span>`;
+    }
+
+    function getSeverityColor(sev) {
+        if (sev === 'critical') return 'var(--danger)';
+        if (sev === 'high') return '#ff6b6b';
+        if (sev === 'medium') return 'var(--warning)';
+        return 'var(--success)';
+    }
+
+    // ── Stats ────────────────────────────────────────────────────────────────────
+    async function loadStats() {
+        try {
+            // Fetch all without pagination for stats
+            const r = await fetch('/api/alerts?limit=500&offset=0', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            const { alerts } = await r.json();
+            const all = alerts || [];
+            document.getElementById('stat-total').textContent = all.length;
+            document.getElementById('stat-falls').textContent = all.filter(a => a.type && (a.type.includes('QUEDA') || a.type.includes('FALL'))).length;
+            document.getElementById('stat-phone').textContent = all.filter(a => a.type && (a.type.includes('CELULAR') || a.type.includes('PHONE'))).length;
+            document.getElementById('stat-idle').textContent = all.filter(a => a.type && (a.type.includes('INATIV') || a.type.includes('IDLE') || a.type.includes('AUSENT'))).length;
+        } catch { /* silently fail */ }
+    }
+
+    // ── Pagination ───────────────────────────────────────────────────────────────
+    function updatePagination() {
+        const from = currentOffset + 1;
+        const to = Math.min(currentOffset + LIMIT, totalAlerts);
+        document.getElementById('pagination-info').textContent =
+            totalAlerts === 0 ? '0 resultados' : `${from}–${to} de ${totalAlerts} alertas`;
+        document.getElementById('btn-prev').disabled = currentOffset === 0;
+        document.getElementById('btn-next').disabled = currentOffset + LIMIT >= totalAlerts;
+    }
+
+    function prevPage() {
+        if (currentOffset === 0) return;
+        currentOffset = Math.max(0, currentOffset - LIMIT);
+        loadAlerts();
+        window.scrollTo(0, 0);
+    }
+
+    function nextPage() {
+        if (currentOffset + LIMIT >= totalAlerts) return;
+        currentOffset += LIMIT;
+        loadAlerts();
+        window.scrollTo(0, 0);
+    }
+
+    function applyFilters() {
+        currentOffset = 0;
+        loadAlerts();
+    }
+
+    // ── Zoom ─────────────────────────────────────────────────────────────────────
+    function openZoom(src) {
+        document.getElementById('zoom-img').src = src;
+        document.getElementById('zoom-overlay').classList.add('active');
+    }
+    function closeZoom() {
+        document.getElementById('zoom-overlay').classList.remove('active');
+    }
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeZoom(); });
+
+    // ── Export ───────────────────────────────────────────────────────────────────
+    function openExportModal() { document.getElementById('export-modal').classList.add('active'); }
+    function closeExportModal() { document.getElementById('export-modal').classList.remove('active'); }
+
+    async function doExport() {
+        const from = document.getElementById('export-from').value;
+        const to = document.getElementById('export-to').value;
+        if (!from || !to) { alert('Preencha as datas de início e fim.'); return; }
+        const btn = document.getElementById('btn-export-confirm');
+        btn.disabled = true;
+        btn.textContent = 'GERANDO...';
+        try {
+            const r = await fetch('/api/reports/export', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                body: JSON.stringify({ from, to })
+            });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.error || 'Erro ao exportar.');
+            window.open(data.file_url, '_blank');
+            closeExportModal();
+        } catch (e) {
+            alert('Erro: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'GERAR RELATÓRIO';
+        }
+    }
+
+    async function deleteAlert(id) {
+        if (!confirm('Tem certeza que deseja excluir este registro permanentemente?')) return;
+        
+        try {
+            const r = await fetch(`/api/alerts/${id}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.error || 'Erro ao excluir.');
+            
+            // Refresh
+            loadAlerts();
+            loadStats();
+        } catch (e) {
+            alert(e.message);
+        }
+    }
+
+    init();
+</script>
+</body>
+</html>

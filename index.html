@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SENTINEL — Monitor Inteligente</title>
+    <meta name="description" content="SENTINEL — Sistema de monitoramento de colaboradores com IA em tempo real.">
+    
+    <!-- CDN IMPORTS -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+    <style>
+        :root {
+            --primary: #7b2fff;
+            --secondary: #ffd700;
+            --danger: #ff4444;
+            --warning: #ff9800;
+            --success: #4caf50;
+            --bg-dark: #0a0a0c;
+            --glass: rgba(20, 20, 25, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --font-main: 'Outfit', 'Inter', sans-serif;
+        }
+
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            background: var(--bg-dark); 
+            color: white; 
+            font-family: var(--font-main); 
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* CAMERA BACKGROUND */
+        #video-container {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; justify-content: center; align-items: center;
+            background: #000;
+        }
+        video { display: none; }
+        canvas {
+            height: 100vh;
+            width: auto;
+            object-fit: contain;
+            filter: contrast(1.1) brightness(0.9);
+        }
+
+        /* HUD PANEL */
+        #hud {
+            position: absolute;
+            top: 20px; left: 20px;
+            width: 280px;
+            padding: 20px;
+            background: var(--glass);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            z-index: 100;
+        }
+        #hud h2 { font-size: 14px; color: var(--primary); letter-spacing: 2px; margin-bottom: 15px; }
+        .hud-item { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; font-weight: 300; }
+        .hud-item span:last-child { font-weight: 600; }
+        .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 5px; }
+        
+        .progress-bar-container { width: 100%; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; margin: 10px 0; overflow: hidden; }
+        #movement-bar { height: 100%; width: 0%; background: var(--primary); transition: width 0.1s; }
+
+        /* ALERT CARDS */
+        #alerts-stack {
+            position: absolute;
+            top: 20px; right: 20px;
+            width: 380px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            z-index: 200;
+        }
+        .alert-card {
+            background: var(--glass);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 0;
+            overflow: hidden;
+            animation: slideIn 0.4s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        
+        .alert-header { padding: 12px 15px; display: flex; align-items: center; gap: 10px; font-weight: 700; color: #fff; }
+        .alert-body { padding: 15px; }
+        .alert-divider { height: 1px; background: rgba(255,255,255,0.1); margin: 10px 0; }
+        .alert-data { font-size: 13px; line-height: 1.6; color: #ccc; }
+        .alert-data b { color: #fff; }
+        .alert-screenshot { width: 100%; border-radius: 8px; margin-top: 10px; border: 1px solid rgba(255,255,255,0.1); }
+        .alert-dismiss { 
+            width: 100%; padding: 10px; background: rgba(255,255,255,0.05); 
+            border: none; color: #888; cursor: pointer; font-size: 12px; 
+            transition: 0.2s; border-top: 1px solid rgba(255,255,255,0.1);
+        }
+        .alert-dismiss:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+        /* LOG PANEL */
+        #log-panel {
+            position: absolute;
+            bottom: 20px; left: 20px;
+            width: 320px; height: 240px;
+            background: var(--glass);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            display: flex; flex-direction: column;
+            z-index: 100;
+        }
+        .log-header { padding: 12px 15px; border-bottom: 1px solid var(--glass-border); display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; }
+        .log-content { flex: 1; overflow-y: auto; padding: 10px; font-size: 11px; font-family: monospace; }
+        .log-entry { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed rgba(255,255,255,0.05); }
+        .log-entry .time { color: var(--primary); }
+
+        /* CAMERA PICKER */
+        #overlay-picker {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); backdrop-filter: blur(20px);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            z-index: 1000;
+        }
+        .picker-content { width: 400px; text-align: center; }
+        .device-btn { 
+            display: block; width: 100%; padding: 15px; margin: 10px 0;
+            background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border);
+            border-radius: 10px; color: white; cursor: pointer; transition: 0.2s;
+        }
+        .device-btn:hover { background: var(--primary); transform: translateY(-2px); }
+
+        /* SCREEN FLASH */
+        #flash { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 999; opacity: 0; }
+
+        /* SCROLLBAR */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
+
+        /* USER HEADER */
+        #user-header {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            background: var(--glass);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 50px;
+            padding: 8px 20px;
+            z-index: 150;
+            font-size: 13px;
+        }
+        #user-header .user-name { color: #ccc; }
+        #user-header .user-name b { color: #fff; }
+        #user-header a {
+            color: var(--primary);
+            text-decoration: none;
+            font-size: 12px;
+            font-weight: 600;
+            border: 1px solid var(--primary);
+            padding: 3px 10px;
+            border-radius: 20px;
+            transition: 0.2s;
+        }
+        #user-header a:hover { background: var(--primary); color: #fff; }
+        #btn-logout {
+            background: none;
+            border: 1px solid rgba(255,255,255,0.2);
+            color: #888;
+            font-size: 11px;
+            padding: 3px 10px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        #btn-logout:hover { border-color: var(--danger); color: var(--danger); }
+
+        /* AUTH MODAL */
+        #auth-modal {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(5, 5, 8, 0.96);
+            backdrop-filter: blur(24px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+        .auth-box {
+            width: 420px;
+            background: rgba(20, 20, 28, 0.95);
+            border: 1px solid rgba(123, 47, 255, 0.3);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 0 60px rgba(123, 47, 255, 0.15), 0 30px 80px rgba(0,0,0,0.6);
+        }
+        .auth-logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .auth-logo h1 {
+            font-size: 26px;
+            font-weight: 700;
+            letter-spacing: 3px;
+            color: #fff;
+        }
+        .auth-logo h1 span { color: var(--primary); }
+        .auth-logo p { color: #666; font-size: 12px; letter-spacing: 1px; margin-top: 4px; }
+        .auth-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 28px;
+            background: rgba(255,255,255,0.04);
+            border-radius: 10px;
+            padding: 4px;
+        }
+        .auth-tab {
+            flex: 1;
+            padding: 9px;
+            text-align: center;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            color: #666;
+            transition: 0.2s;
+            border: none;
+            background: none;
+        }
+        .auth-tab.active { background: var(--primary); color: #fff; }
+        .auth-form { display: none; flex-direction: column; gap: 14px; }
+        .auth-form.active { display: flex; }
+        .auth-form input {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            padding: 13px 16px;
+            color: #fff;
+            font-size: 14px;
+            font-family: var(--font-main);
+            outline: none;
+            transition: 0.2s;
+        }
+        .auth-form input::placeholder { color: #555; }
+        .auth-form input:focus { border-color: var(--primary); background: rgba(123,47,255,0.07); }
+        .auth-form button {
+            padding: 14px;
+            background: var(--primary);
+            border: none;
+            border-radius: 10px;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            letter-spacing: 1px;
+            transition: 0.2s;
+            margin-top: 4px;
+        }
+        .auth-form button:hover { background: #6a1fe0; transform: translateY(-1px); }
+        .auth-form button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .auth-error {
+            color: var(--danger);
+            font-size: 12px;
+            text-align: center;
+            min-height: 18px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- AUTH MODAL -->
+    <div id="auth-modal">
+        <div class="auth-box">
+            <div class="auth-logo">
+                <h1>SENTI<span>NEL</span></h1>
+                <p>MONITOR INTELIGENTE DE COLABORADORES</p>
+            </div>
+            <div class="auth-tabs">
+                <button class="auth-tab active" id="tab-login" onclick="switchTab('login')">ENTRAR</button>
+                <button class="auth-tab" id="tab-register" onclick="switchTab('register')">CADASTRAR</button>
+            </div>
+            <form class="auth-form active" id="form-login" onsubmit="doLogin(event)">
+                <input type="email" id="login-email" placeholder="E-mail" required autocomplete="email">
+                <input type="password" id="login-password" placeholder="Senha" required autocomplete="current-password">
+                <div class="auth-error" id="login-error"></div>
+                <button type="submit" id="btn-login-submit">ACESSAR SISTEMA</button>
+            </form>
+            <form class="auth-form" id="form-register" onsubmit="doRegister(event)">
+                <input type="text" id="reg-name" placeholder="Nome completo" required autocomplete="name">
+                <input type="email" id="reg-email" placeholder="E-mail" required autocomplete="email">
+                <input type="password" id="reg-password" placeholder="Senha (mínimo 6 caracteres)" required minlength="6" autocomplete="new-password">
+                <div class="auth-error" id="register-error"></div>
+                <button type="submit" id="btn-register-submit">CRIAR CONTA</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- USER HEADER (hidden until authenticated) -->
+    <div id="user-header" style="display:none">
+        <span class="user-name">👤 <b id="header-user-name"></b></span>
+        <a href="/dashboard" id="link-dashboard">DASHBOARD</a>
+        <button id="btn-logout" onclick="doLogout()">SAIR</button>
+    </div>
+
+    <div id="video-container">
+        <video id="input-video" playsinline></video>
+        <canvas id="output-canvas"></canvas>
+    </div>
+
+    <div id="flash"></div>
+
+    <div id="hud">
+        <h2>SENTINEL — MONITOR IA</h2>
+        <div class="hud-item">
+            <span>STATUS:</span>
+            <span id="hud-status">INICIALIZANDO <div class="status-dot" style="background:#fff"></div></span>
+        </div>
+        <div class="hud-item">
+            <span>MOVIMENTO:</span>
+            <span id="hud-movement-val">0.000</span>
+        </div>
+        <div class="progress-bar-container"><div id="movement-bar"></div></div>
+        <div class="hud-item">
+            <span>TEMPO PARADO:</span>
+            <span id="hud-idle-time">00:00:00</span>
+        </div>
+        <div class="hud-item">
+            <span>TEMPO ATIVO:</span>
+            <span id="hud-active-time">00:00:00</span>
+        </div>
+        <div class="hud-item">
+            <span>CELULAR:</span>
+            <span id="hud-phone">AGUARDANDO ●</span>
+        </div>
+        <div class="hud-item">
+            <span>QUEDA:</span>
+            <span id="hud-fall">NORMAL ●</span>
+        </div>
+        <div class="hud-item" style="margin-top:10px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
+            <span>ALERTAS HOJE:</span>
+            <span id="hud-alerts-count">0</span>
+        </div>
+    </div>
+
+    <div id="alerts-stack"></div>
+
+    <div id="log-panel">
+        <div class="log-header">
+            <span>📋 REGISTRO</span>
+            <div style="display:flex; gap:10px">
+                <span id="log-count">0 eventos</span>
+                <span style="cursor:pointer; color:var(--primary)" onclick="exportLogs()">[EXPORTAR]</span>
+            </div>
+        </div>
+        <div id="log-content" class="log-content"></div>
+    </div>
+
+    <div id="overlay-picker" style="display:none">
+        <div class="picker-content">
+            <h1 style="margin-bottom:30px">Selecione a Câmera</h1>
+            <div id="device-list"></div>
+        </div>
+    </div>
+
+    <script>
+        // // CONSTANTS & CONFIG
+        const IDLE_THRESHOLD = 0.035; // Aumentado para exigir movimentos mais "radicais"
+        const IDLE_ALERT_DELAY = 15; // seconds
+        const ABSENCE_DELAY = 5; // seconds
+        const PHONE_CONFIRM_DELAY = 2000; // ms
+        const FALL_TIER2_DELAY = 2000; // ms
+        
+        // // STATE
+        let state = {
+            worker: 'TRABALHANDO', // TRABALHANDO, PARADO, INATIVO, AUSENTE
+            idleStartTime: null,
+            absenceStartTime: null,
+            activeStartTime: Date.now(),
+            movementBuffer: [],
+            phoneDetected: false,
+            phoneInHand: false,
+            phoneInHandStartTime: null,
+            phoneAlertFired: false,
+            fallTier: 0, // 0, 1 (critical), 2 (possible)
+            fallStartTime: null,
+            fallAlertFired: false,
+            alertsToday: 0,
+            activeAlerts: new Set(),
+            lastProcessedFrame: 0,
+            isKiosk: new URLSearchParams(window.location.search).get('kiosk') === 'true',
+            smoothedLandmarks: null
+        };
+
+        // // AUDIO SYSTEM
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playBeep(freq, duration, count = 1, gap = 100) {
+            for(let i=0; i<count; i++) {
+                setTimeout(() => {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.frequency.value = freq;
+                    osc.type = 'sine';
+                    gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration/1000);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start();
+                    osc.stop(audioCtx.currentTime + duration/1000);
+                }, i * (duration + gap));
+            }
+        }
+
+        // // CAMERA SETUP
+        const video = document.getElementById('input-video');
+        const canvas = document.getElementById('output-canvas');
+        const ctx = canvas.getContext('2d');
+        let cocoModel = null;
+        let pose = null;
+        let camera = null;
+
+        async function init() {
+            if (state.isKiosk) document.oncontextmenu = () => false;
+            
+            // Load COCO-SSD
+            try {
+                cocoModel = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+                logToPanel("COCO-SSD carregado com sucesso.");
+            } catch(e) {
+                logToPanel("Erro ao carregar COCO-SSD. Detecção de celular desativada.");
+                document.getElementById('hud-phone').innerText = "INDISPONÍVEL";
+            }
+
+            // Enumerate cameras
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(d => d.kind === 'videoinput');
+            
+            const savedDevice = localStorage.getItem('sentinel_camera');
+            if (videoDevices.length === 1 || (state.isKiosk && savedDevice)) {
+                startCamera(savedDevice || videoDevices[0].deviceId);
+            } else {
+                const picker = document.getElementById('overlay-picker');
+                const list = document.getElementById('device-list');
+                picker.style.display = 'flex';
+                videoDevices.forEach(d => {
+                    const btn = document.createElement('button');
+                    btn.className = 'device-btn';
+                    btn.innerText = d.label || `Câmera ${list.children.length + 1}`;
+                    btn.onclick = () => {
+                        localStorage.setItem('sentinel_camera', d.deviceId);
+                        picker.style.display = 'none';
+                        startCamera(d.deviceId);
+                    };
+                    list.appendChild(btn);
+                });
+            }
+        }
+
+        function startCamera(deviceId) {
+            pose = new Pose({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+            });
+            pose.setOptions({
+                modelComplexity: 1,
+                smoothLandmarks: true,
+                enableSegmentation: false,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            pose.onResults(onResults);
+
+            camera = new Camera(video, {
+                onFrame: async () => {
+                    await pose.send({image: video});
+                },
+                width: 1280,
+                height: 720
+            });
+            camera.start();
+            logToPanel("Sistema iniciado. Monitorando...");
+        }
+
+        // // MOVEMENT ENGINE
+        function smoothLandmarks(newLandmarks) {
+            if (!newLandmarks) { state.smoothedLandmarks = null; return null; }
+            if (!state.smoothedLandmarks) { state.smoothedLandmarks = JSON.parse(JSON.stringify(newLandmarks)); return newLandmarks; }
+            
+            const alpha = 0.4; // Fator de suavização (menor = mais suave, menos trepidação)
+            state.smoothedLandmarks = state.smoothedLandmarks.map((p, i) => ({
+                x: p.x * (1 - alpha) + newLandmarks[i].x * alpha,
+                y: p.y * (1 - alpha) + newLandmarks[i].y * alpha,
+                visibility: newLandmarks[i].visibility
+            }));
+            return state.smoothedLandmarks;
+        }
+
+        function calculateMovement(landmarks) {
+            if (!landmarks) return 0;
+            
+            const l = smoothLandmarks(landmarks);
+            
+            const current = {
+                nose: l[0],
+                shoulder: { x: (l[11].x + l[12].x)/2, y: (l[11].y + l[12].y)/2 },
+                hip: { x: (l[23].x + l[24].x)/2, y: (l[23].y + l[24].y)/2 },
+                elbowL: l[13], elbowR: l[14],
+                wristL: l[15], wristR: l[16]
+            };
+
+            state.movementBuffer.push(current);
+            if (state.movementBuffer.length > 20) state.movementBuffer.shift();
+            if (state.movementBuffer.length < 20) return 0.05; // Buffer inicial
+
+            const prev = state.movementBuffer[0];
+            const dist = (a, b) => Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2));
+            
+            const wristD = (dist(current.wristL, prev.wristL) + dist(current.wristR, prev.wristR)) / 2;
+            const elbowD = (dist(current.elbowL, prev.elbowL) + dist(current.elbowR, prev.elbowR)) / 2;
+            const shoulderD = dist(current.shoulder, prev.shoulder);
+            const hipD = dist(current.hip, prev.hip); // Detecta deslocamento do corpo/andar
+            const headD = dist(current.nose, prev.nose);
+
+            // Peso maior para braços e mãos para detectar atividade produtiva
+            let score = (wristD * 0.45) + (elbowD * 0.25) + (hipD * 0.15) + (shoulderD * 0.10) + (headD * 0.05);
+            return score;
+        }
+
+        // // DETECTION LOGIC
+        let lastPhoneDetections = [];
+        
+        async function runDetections(results) {
+            const landmarks = results.poseLandmarks;
+            
+            // IDLE DETECTION
+            if (!landmarks) {
+                if (!state.absenceStartTime) state.absenceStartTime = Date.now();
+                const absenceTime = (Date.now() - state.absenceStartTime) / 1000;
+                if (absenceTime > ABSENCE_DELAY) {
+                    state.worker = 'AUSENTE';
+                    triggerAlert('COLABORADOR AUSENTE', ['AUSENTE']);
+                }
+                return;
+            }
+            state.absenceStartTime = null;
+
+            const mScore = calculateMovement(landmarks);
+            updateHUDMovement(mScore);
+
+            if (mScore > IDLE_THRESHOLD) {
+                state.worker = 'TRABALHANDO';
+                state.idleStartTime = null;
+                resolveAlert('COLABORADOR INATIVO');
+            } else {
+                if (!state.idleStartTime) state.idleStartTime = Date.now();
+                state.worker = 'PARADO';
+                const idleTime = (Date.now() - state.idleStartTime) / 1000;
+                if (idleTime >= IDLE_ALERT_DELAY) {
+                    state.worker = 'INATIVO';
+                    triggerAlert('COLABORADOR INATIVO', ['WORKER_IDLE']);
+                }
+            }
+
+            // PHONE DETECTION (every 4 frames)
+            if (cocoModel) {
+                state.lastProcessedFrame++;
+                if (state.lastProcessedFrame % 4 === 0) {
+                    const detections = await cocoModel.detect(video);
+                    lastPhoneDetections = detections.filter(d => d.class === 'cell phone' && d.score > 0.50);
+                }
+
+                let phoneInHandFound = false;
+                let phoneSuspected = lastPhoneDetections.length > 0;
+
+                lastPhoneDetections.forEach(phone => {
+                    const pad = 0.4;
+                    const bx = phone.bbox[0] - phone.bbox[2]*pad/2;
+                    const by = phone.bbox[1] - phone.bbox[3]*pad/2;
+                    const bw = phone.bbox[2] * (1+pad);
+                    const bh = phone.bbox[3] * (1+pad);
+
+                    // Normalize pose to pixel
+                    const checkWrist = (w) => {
+                        if (w.visibility < 0.5) return false;
+                        const px = w.x * canvas.width;
+                        const py = w.y * canvas.height;
+                        return px >= bx && px <= bx + bw && py >= by && py <= by + bh;
+                    };
+
+                    if (checkWrist(landmarks[15]) || checkWrist(landmarks[16])) {
+                        phoneInHandFound = true;
+                    }
+                });
+
+                // ADVANCED POSTURAL DETECTION (Inspired by reference images)
+                const posturalScore = analyzePosturalPhoneUsage(landmarks);
+                const combinedPhoneScore = (lastPhoneDetections.length > 0 ? 0.6 : 0) + (posturalScore * 0.4);
+
+                if (combinedPhoneScore > 0.50) {
+                    if (!state.phoneInHandStartTime) state.phoneInHandStartTime = Date.now();
+                    
+                    // Se a postura for muito evidente (Score postural > 0.8), reduz o tempo de confirmação
+                    const dynamicDelay = posturalScore > 0.8 ? 500 : PHONE_CONFIRM_DELAY;
+
+                    if (Date.now() - state.phoneInHandStartTime > dynamicDelay) {
+                        triggerAlert('USO DE CELULAR', ['IA_OBJECT', 'POSTURAL_HEURISTICS'].filter((_,i) => [lastPhoneDetections.length > 0, posturalScore > 0.5][i]));
+                    }
+                } else {
+                    state.phoneInHandStartTime = null;
+                    resolveAlert('USO DE CELULAR');
+                }
+                
+                state.phoneInHand = phoneInHandFound || posturalScore > 0.7;
+                state.phoneDetected = phoneSuspected || posturalScore > 0.5;
+            }
+
+            // FALL DETECTION
+            const metrics = computeFallMetrics(landmarks);
+            const { tier, sittingGuard } = evaluateFall(metrics, landmarks);
+            
+            if (tier === 1) {
+                state.fallTier = 1;
+                triggerAlert('QUEDA CRÍTICA', ['FALL_DETECTED_CRITICAL']);
+            } else if (tier === 2) {
+                if (!state.fallStartTime) state.fallStartTime = Date.now();
+                if (Date.now() - state.fallStartTime > FALL_TIER2_DELAY) {
+                    state.fallTier = 2;
+                    triggerAlert('POSSÍVEL QUEDA', ['FALL_DETECTED_POSSIBLE']);
+                }
+            } else {
+                state.fallTier = 0;
+                state.fallStartTime = null;
+                resolveAlert('QUEDA CRÍTICA');
+                resolveAlert('POSSÍVEL QUEDA');
+            }
+        }
+
+        function analyzePosturalPhoneUsage(l) {
+            if (!l) return 0;
+            const dist = (a, b) => Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2));
+
+            // 1. Wrist Proximity: In the images, hands are close together
+            const wristDist = dist(l[15], l[16]);
+            const wristScore = wristDist < 0.15 ? 1 : (wristDist < 0.25 ? 0.5 : 0);
+
+            // 2. Head Tilt: Looking down at the mid-section
+            const midShoulderY = (l[11].y + l[12].y) / 2;
+            const headTiltScore = l[0].y > midShoulderY - 0.05 ? 1 : 0;
+
+            // 3. Elbow Geometry: Bent arms towards the center
+            const leftElbowAngle = Math.abs(l[13].x - l[11].x); // Distance from shoulder to elbow in X
+            const elbowScore = leftElbowAngle < 0.2 ? 1 : 0;
+
+            // 4. Hands near Torso Center
+            const midHipY = (l[23].y + l[24].y) / 2;
+            const handInTorso = (l[15].y > midShoulderY && l[15].y < midHipY) ? 1 : 0;
+
+            return (wristScore * 0.4) + (headTiltScore * 0.3) + (handInTorso * 0.3);
+        }
+
+        function computeFallMetrics(l) {
+            const dist = (a, b) => Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2));
+            const midS = { x: (l[11].x + l[12].x)/2, y: (l[11].y + l[12].y)/2 };
+            const midH = { x: (l[23].x + l[24].x)/2, y: (l[23].y + l[24].y)/2 };
+            const midA = { x: (l[27].x + l[28].x)/2, y: (l[27].y + l[28].y)/2 };
+            
+            const bodyHeight = dist(midS, midA) || 0.1;
+            const spineVec = { x: midS.x - midH.x, y: midS.y - midH.y };
+            const spineAngle = Math.abs(Math.atan2(spineVec.x, -spineVec.y) * 180 / Math.PI);
+            
+            return {
+                bodyHeight,
+                spineAngle,
+                hipVF: Math.abs(midH.y - midA.y) / bodyHeight,
+                torsoVF: Math.abs(midS.y - midH.y) / bodyHeight,
+                compressionRatio: (Math.max(...l.map(p=>p.y)) - Math.min(...l.map(p=>p.y))) / bodyHeight,
+                shoulderHipFrac: dist(l[11], l[12]) / dist(l[23], l[24])
+            };
+        }
+
+        function evaluateFall(m, l) {
+            const kneeAboveHip = l[25].y < l[23].y || l[26].y < l[24].y;
+            const sittingGuard = kneeAboveHip || m.hipVF > 0.25;
+            
+            if (sittingGuard) return { tier: 0, sittingGuard: true };
+
+            // Tier 1
+            if ((m.spineAngle > 70 && m.hipVF < 0.12 && m.torsoVF < 0.12) ||
+                (m.compressionRatio < 0.28) ||
+                (m.shoulderHipFrac < 0.10 && m.hipVF < 0.25)) return { tier: 1 };
+
+            // Tier 2
+            if ((m.spineAngle > 55 && m.hipVF < 0.20 && m.torsoVF < 0.20) ||
+                (m.compressionRatio < 0.38) ||
+                (m.shoulderHipFrac < 0.16 && m.hipVF < 0.30)) return { tier: 2 };
+
+            return { tier: 0 };
+        }
+
+        // // ALERT SYSTEM
+        async function triggerAlert(title, modules) {
+            if (state.activeAlerts.has(title)) return;
+            state.activeAlerts.add(title);
+            
+            // Sound & Flash
+            if (title.includes('FALL')) {
+                playBeep(880, 1200);
+                flashScreen(title.includes('CRÍTICA') ? 'red' : 'orange', title.includes('CRÍTICA') ? 3 : 1);
+            } else if (title.includes('CELULAR')) {
+                playBeep(523, 150);
+                setTimeout(() => playBeep(784, 150), 200);
+            } else if (title.includes('INATIVO')) {
+                playBeep(660, 300, 2, 200);
+            }
+
+            state.alertsToday++;
+            document.getElementById('hud-alerts-count').innerText = state.alertsToday;
+            
+            // Capture Screenshot
+            const frame = canvas.toDataURL('image/jpeg', 0.75);
+            
+            // Determine severity from title
+            let severity = 'medium';
+            if (title.includes('CRÍTICA') || title.includes('QUEDA')) severity = 'critical';
+            else if (title.includes('CELULAR')) severity = 'high';
+            else if (title.includes('INATIVO') || title.includes('AUSENTE')) severity = 'low';
+
+            // Send to server (with JWT auth)
+            fetch('/api/alert', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + (localStorage.getItem('sentinel_token') || '')
+                },
+                body: JSON.stringify({
+                    type: title,
+                    severity: severity,
+                    confidence: 90,
+                    description: `Módulos: ${modules.join(', ')}`,
+                    modules: modules,
+                    screenshot: frame
+                })
+            }).catch(e => console.error("Server alert failed", e));
+
+            createAlertCard(title, modules, frame);
+            logToPanel(`${title} detectado.`);
+        }
+
+        function resolveAlert(title) {
+            if (!state.activeAlerts.has(title)) return;
+            state.activeAlerts.delete(title);
+            // We don't remove cards automatically unless requested, 
+            // but we update state for internal logic
+        }
+
+        function createAlertCard(title, modules, imgData) {
+            const stack = document.getElementById('alerts-stack');
+            const card = document.createElement('div');
+            card.className = 'alert-card';
+            
+            let color = 'var(--warning)';
+            let icon = '⚠️';
+            if (title.includes('FALL')) { color = 'var(--danger)'; icon = '🚨'; }
+            else if (title.includes('CELULAR')) { color = 'var(--primary)'; icon = '📱'; }
+
+            card.innerHTML = `
+                <div class="alert-header" style="background:${color}">
+                    <span>${icon} ${title}</span>
+                </div>
+                <div class="alert-body">
+                    <div class="alert-data">
+                        📅 <b>Data:</b> ${new Date().toLocaleDateString('pt-BR')}<br>
+                        🕐 <b>Hora:</b> ${new Date().toLocaleTimeString('pt-BR')}<br>
+                        ⏱ <b>Duração:</b> <span class="timer">00:00:00</span>
+                    </div>
+                    <div class="alert-divider"></div>
+                    <div class="alert-data">
+                        📊 <b>DADOS:</b><br>
+                        • Módulos: ${modules.join(' + ')}<br>
+                        • Confiança: 92%
+                    </div>
+                    <img src="${imgData}" class="alert-screenshot">
+                </div>
+                <button class="alert-dismiss" onclick="this.parentElement.remove()">DISPENSAR ALERTA</button>
+            `;
+
+            if (stack.children.length >= 3) stack.lastChild.remove();
+            stack.prepend(card);
+
+            // Timer logic
+            const startTime = Date.now();
+            const timerEl = card.querySelector('.timer');
+            const interval = setInterval(() => {
+                if (!card.parentElement) { clearInterval(interval); return; }
+                const diff = Date.now() - startTime;
+                const h = Math.floor(diff/3600000).toString().padStart(2,'0');
+                const m = Math.floor((diff%3600000)/60000).toString().padStart(2,'0');
+                const s = Math.floor((diff%60000)/1000).toString().padStart(2,'0');
+                timerEl.innerText = `${h}:${m}:${s}`;
+            }, 1000);
+        }
+
+        // // UI UTILS
+        function flashScreen(color, times) {
+            const flash = document.getElementById('flash');
+            flash.style.background = color;
+            let count = 0;
+            const intv = setInterval(() => {
+                flash.style.opacity = flash.style.opacity == '0.3' ? '0' : '0.3';
+                if (++count >= times * 2) {
+                    clearInterval(intv);
+                    flash.style.opacity = '0';
+                }
+            }, 200);
+        }
+
+        function logToPanel(msg) {
+            const content = document.getElementById('log-content');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            const time = new Date().toLocaleTimeString('pt-BR');
+            entry.innerHTML = `<span class="time">[${time}]</span> ${msg}`;
+            content.prepend(entry);
+            
+            const entries = content.getElementsByClassName('log-entry');
+            if (entries.length > 30) entries[entries.length-1].remove();
+            document.getElementById('log-count').innerText = `${entries.length} eventos`;
+        }
+
+        function updateHUDMovement(score) {
+            const valEl = document.getElementById('hud-movement-val');
+            const barEl = document.getElementById('movement-bar');
+            valEl.innerText = score.toFixed(4);
+            const percent = Math.min(100, (score / 0.1) * 100);
+            barEl.style.width = `${percent}%`;
+            barEl.style.background = score < IDLE_THRESHOLD ? 'var(--warning)' : 'var(--primary)';
+        }
+
+        function onResults(results) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.save();
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+            if (results.poseLandmarks) {
+                drawSkeleton(results.poseLandmarks);
+                runDetections(results);
+            } else {
+                state.worker = 'AUSENTE';
+                runDetections(results);
+            }
+
+            drawOverlays();
+            updateHUDState();
+            ctx.restore();
+        }
+
+        function drawSkeleton(l) {
+            // Draw lines
+            ctx.strokeStyle = 'rgba(123, 47, 255, 0.6)';
+            ctx.lineWidth = 4;
+            const connections = [
+                [11,12], [11,13], [13,15], [12,14], [14,16], // Upper
+                [11,23], [12,24], [23,24], // Torso
+                [23,25], [25,27], [24,26], [26,28] // Lower
+            ];
+            connections.forEach(([i, j]) => {
+                ctx.beginPath();
+                ctx.moveTo(l[i].x * canvas.width, l[i].y * canvas.height);
+                ctx.lineTo(l[j].x * canvas.width, l[j].y * canvas.height);
+                ctx.stroke();
+            });
+
+            // Draw points
+            l.forEach((p, i) => {
+                if (p.visibility < 0.5) return;
+                ctx.fillStyle = i < 11 ? '#fff' : 'var(--primary)';
+                ctx.beginPath();
+                ctx.arc(p.x * canvas.width, p.y * canvas.height, 4, 0, 2*Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function drawOverlays() {
+            // Phone Boxes
+            lastPhoneDetections.forEach(d => {
+                ctx.strokeStyle = state.phoneInHand ? '#7b2fff' : '#7b2fff';
+                ctx.setLineDash(state.phoneInHand ? [] : [5, 5]);
+                ctx.lineWidth = 3;
+                ctx.strokeRect(...d.bbox);
+                ctx.fillStyle = '#7b2fff';
+                ctx.font = 'bold 16px Outfit';
+                ctx.fillText(`📱 CELULAR ${Math.round(d.score*100)}%`, d.bbox[0], d.bbox[1]-10);
+                ctx.setLineDash([]);
+            });
+
+            // Fall Boxes & Idle Circle
+            if (state.movementBuffer.length > 0) {
+                const head = state.movementBuffer[state.movementBuffer.length-1].nose;
+                if (state.worker === 'PARADO' || state.worker === 'INATIVO') {
+                    const idleTime = (Date.now() - state.idleStartTime) / 1000;
+                    const progress = Math.min(1, idleTime / IDLE_ALERT_DELAY);
+                    ctx.beginPath();
+                    ctx.strokeStyle = '#ffd700';
+                    ctx.lineWidth = 5;
+                    ctx.arc(head.x * canvas.width, head.y * canvas.height - 40, 30, -Math.PI/2, -Math.PI/2 + (progress * 2 * Math.PI));
+                    ctx.stroke();
+                }
+            }
+        }
+
+        function updateHUDState() {
+            const statusEl = document.getElementById('hud-status');
+            let color = '#4caf50';
+            if (state.worker === 'PARADO') color = '#ffd700';
+            if (state.worker === 'INATIVO') color = '#ff9800';
+            if (state.worker === 'AUSENTE') color = '#ff4444';
+            
+            statusEl.innerHTML = `${state.worker} <div class="status-dot" style="background:${color}"></div>`;
+            
+            // Timers
+            const activeTime = Date.now() - state.activeStartTime;
+            document.getElementById('hud-active-time').innerText = formatMs(activeTime);
+            
+            if (state.idleStartTime) {
+                document.getElementById('hud-idle-time').innerText = formatMs(Date.now() - state.idleStartTime);
+            } else {
+                document.getElementById('hud-idle-time').innerText = "00:00:00";
+            }
+
+            const phoneEl = document.getElementById('hud-phone');
+            if (state.phoneInHand) phoneEl.innerHTML = `<span style="color:var(--primary)">EM USO ●</span>`;
+            else if (state.phoneDetected) phoneEl.innerHTML = `<span style="color:var(--warning)">SUSPEITO ●</span>`;
+            else phoneEl.innerHTML = `NÃO DETECTADO ●`;
+
+            const fallEl = document.getElementById('hud-fall');
+            if (state.fallTier === 1) fallEl.innerHTML = `<span style="color:var(--danger)">CRÍTICA ●</span>`;
+            else if (state.fallTier === 2) fallEl.innerHTML = `<span style="color:var(--warning)">POSSÍVEL ●</span>`;
+            else fallEl.innerHTML = `NORMAL ●`;
+        }
+
+        function formatMs(ms) {
+            const s = Math.floor(ms/1000);
+            const h = Math.floor(s/3600).toString().padStart(2,'0');
+            const m = Math.floor((s%3600)/60).toString().padStart(2,'0');
+            const sec = (s%60).toString().padStart(2,'0');
+            return `${h}:${m}:${sec}`;
+        }
+
+        function exportLogs() {
+            const logs = Array.from(document.getElementById('log-content').children).map(e => e.innerText).join('\n');
+            const blob = new Blob([logs], {type: 'text/plain'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `sentinel_logs_${new Date().getTime()}.txt`;
+            a.click();
+        }
+
+        // ─── AUTH LOGIC ───────────────────────────────────────────────────────────
+        function switchTab(tab) {
+            document.getElementById('tab-login').classList.toggle('active', tab === 'login');
+            document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+            document.getElementById('form-login').classList.toggle('active', tab === 'login');
+            document.getElementById('form-register').classList.toggle('active', tab === 'register');
+        }
+
+        async function doLogin(e) {
+            e.preventDefault();
+            const btn = document.getElementById('btn-login-submit');
+            const errEl = document.getElementById('login-error');
+            errEl.textContent = '';
+            btn.disabled = true;
+            btn.textContent = 'VERIFICANDO...';
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: document.getElementById('login-email').value,
+                        password: document.getElementById('login-password').value
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Erro ao entrar.');
+                onAuthSuccess(data.token, data.user);
+            } catch(err) {
+                errEl.textContent = err.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'ACESSAR SISTEMA';
+            }
+        }
+
+        async function doRegister(e) {
+            e.preventDefault();
+            const btn = document.getElementById('btn-register-submit');
+            const errEl = document.getElementById('register-error');
+            errEl.textContent = '';
+            btn.disabled = true;
+            btn.textContent = 'CRIANDO CONTA...';
+            try {
+                const res = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: document.getElementById('reg-name').value,
+                        email: document.getElementById('reg-email').value,
+                        password: document.getElementById('reg-password').value
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Erro ao cadastrar.');
+                onAuthSuccess(data.token, data.user);
+            } catch(err) {
+                errEl.textContent = err.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'CRIAR CONTA';
+            }
+        }
+
+        function onAuthSuccess(token, user) {
+            localStorage.setItem('sentinel_token', token);
+            localStorage.setItem('sentinel_user', JSON.stringify(user));
+            document.getElementById('auth-modal').style.display = 'none';
+            document.getElementById('user-header').style.display = 'flex';
+            document.getElementById('header-user-name').textContent = user.name || user.email;
+            init();
+        }
+
+        function doLogout() {
+            localStorage.removeItem('sentinel_token');
+            localStorage.removeItem('sentinel_user');
+            location.reload();
+        }
+
+        // ─── BOOT ─────────────────────────────────────────────────────────────────
+        window.onload = function() {
+            const token = localStorage.getItem('sentinel_token');
+            if (!token) {
+                document.getElementById('auth-modal').style.display = 'flex';
+                return;
+            }
+            // Validate token by calling /api/me
+            fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + token } })
+                .then(r => {
+                    if (!r.ok) throw new Error('invalid');
+                    return r.json();
+                })
+                .then(user => {
+                    document.getElementById('auth-modal').style.display = 'none';
+                    document.getElementById('user-header').style.display = 'flex';
+                    document.getElementById('header-user-name').textContent = user.name || user.email;
+                    init();
+                })
+                .catch(() => {
+                    localStorage.removeItem('sentinel_token');
+                    localStorage.removeItem('sentinel_user');
+                    document.getElementById('auth-modal').style.display = 'flex';
+                });
+        };
+    </script>
+</body>
+</html>
