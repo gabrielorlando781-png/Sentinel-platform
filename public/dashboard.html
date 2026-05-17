@@ -276,9 +276,13 @@
 <body>
 
 <header>
-    <div class="logo">SENTI<span>NEL</span></div>
+    <div class="logo" style="display: flex; align-items: center; gap: 12px;">
+        <img src="/assets/logo.jpg" alt="Logo" style="height: 32px; border-radius: 4px; border: 1px solid var(--primary);">
+        <span>SENTI<span>NEL</span></span>
+    </div>
     <div class="header-right">
         <span id="badge-admin" class="badge-admin" style="display:none">⚡ ADMIN</span>
+        <button class="btn-sm" style="border-color:var(--primary); color:var(--primary)" onclick="openSettingsModal()">⚙️ CONFIGURAÇÕES</button>
         <span class="user-email" id="header-email"></span>
         <button class="btn-sm" onclick="doLogout()">SAIR</button>
     </div>
@@ -334,14 +338,18 @@
             <input type="date" id="filter-to" onchange="applyFilters()">
         </div>
         <div class="filter-spacer"></div>
+        <button id="btn-bulk-delete" class="btn-sm" style="display: none; background: var(--danger); border-color: var(--danger); color: white; font-weight: 600; margin-right: 10px;" onclick="deleteSelectedAlerts()">🗑️ EXCLUIR SELECIONADOS (<span id="selected-count">0</span>)</button>
         <button class="btn-primary" onclick="openExportModal()">⬇ EXPORTAR RELATÓRIO</button>
-        <a href="/" style="text-decoration:none"><button class="btn-sm" style="color:var(--primary);border-color:var(--primary)">◀ MONITOR</button></a>
+        <button class="btn-sm" style="color:var(--primary);border-color:var(--primary)" onclick="window.close() || (window.location.href='/')">◀ VOLTAR (FECHAR DASHBOARD)</button>
     </div>
 
     <div class="table-wrapper">
         <table>
             <thead>
                 <tr>
+                    <th style="width: 40px; text-align: center;">
+                        <input type="checkbox" id="select-all" onclick="toggleSelectAll(this)" style="accent-color: var(--primary); cursor: pointer; width: 16px; height: 16px; vertical-align: middle;">
+                    </th>
                     <th>Data / Hora</th>
                     <th>Tipo</th>
                     <th>Severidade</th>
@@ -352,7 +360,7 @@
                 </tr>
             </thead>
             <tbody id="alerts-body">
-                <tr class="loading-row"><td colspan="6">CARREGANDO...</td></tr>
+                <tr class="loading-row"><td colspan="8">CARREGANDO...</td></tr>
             </tbody>
         </table>
         <div class="pagination">
@@ -369,6 +377,84 @@
 <div id="zoom-overlay" onclick="closeZoom()">
     <img id="zoom-img" src="" alt="Screenshot ampliado">
 </div>
+
+<!-- SETTINGS MODAL -->
+<div id="settings-modal" class="zoom-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 1000; justify-content: center; align-items: center;">
+    <div class="export-box" style="width: 500px; max-height: 90vh; overflow-y: auto;">
+        <h3 style="display:flex; align-items:center; gap:10px;">⚙️ CONFIGURAÇÕES DE CONTA</h3>
+        <p style="font-size: 12px; color: var(--muted); margin-bottom: 20px;">Personalize suas notificações e segurança.</p>
+        
+        <!-- TIMER CONFIG -->
+        <div class="filter-group" style="margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 15px;">
+            <label style="display:block; margin-bottom:10px;">⏳ TEMPO DE DETECÇÃO (H:M:S)</label>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <div style="flex:1;">
+                    <span style="font-size:10px; color:var(--muted); display:block; text-align:center;">HORAS</span>
+                    <input type="number" id="set-timer-h" min="0" max="23" value="0" style="width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 8px; font-family: 'JetBrains Mono'; text-align: center;">
+                </div>
+                <div style="flex:1;">
+                    <span style="font-size:10px; color:var(--muted); display:block; text-align:center;">MINUTOS</span>
+                    <input type="number" id="set-timer-m" min="0" max="59" value="0" style="width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 8px; font-family: 'JetBrains Mono'; text-align: center;">
+                </div>
+                <div style="flex:1;">
+                    <span style="font-size:10px; color:var(--muted); display:block; text-align:center;">SEGUNDOS</span>
+                    <input type="number" id="set-timer-s" min="0" max="59" value="3" style="width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 8px; font-family: 'JetBrains Mono'; text-align: center;">
+                </div>
+            </div>
+            <p style="font-size: 11px; color: var(--muted); margin-top: 8px;">Define quanto tempo a queda deve persistir antes do disparo.</p>
+        </div>
+
+        <div class="filter-group" style="margin-bottom: 15px;">
+            <label>NOTIFICAÇÕES TELEGRAM</label>
+            <div style="display:flex; align-items:center; gap:10px; margin: 10px 0;">
+                <input type="checkbox" id="set-tg-active" style="width:18px; height:18px; accent-color:var(--primary);">
+                <label for="set-tg-active" style="margin:0; font-size:13px; color:var(--text); font-weight:bold;">Ativar alertas via Telegram</label>
+            </div>
+            
+            <div id="tg-filters-container" style="margin-left: 28px; margin-top: 10px;">
+                <p style="font-size: 11px; color: var(--muted); margin-bottom: 8px;">Quais eventos deseja receber?</p>
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom: 5px;">
+                    <input type="checkbox" id="set-tg-filter-queda" value="QUEDA" class="tg-filter-cb" style="accent-color:var(--danger);">
+                    <label for="set-tg-filter-queda" style="margin:0; font-size:12px;">Queda (Crítico)</label>
+                </div>
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom: 5px;">
+                    <input type="checkbox" id="set-tg-filter-celular" value="CELULAR" class="tg-filter-cb" style="accent-color:#b06aff;">
+                    <label for="set-tg-filter-celular" style="margin:0; font-size:12px;">Uso de Celular</label>
+                </div>
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom: 5px;">
+                    <input type="checkbox" id="set-tg-filter-inativo" value="INATIVO" class="tg-filter-cb" style="accent-color:var(--warning);">
+                    <label for="set-tg-filter-inativo" style="margin:0; font-size:12px;">Inatividade / Ausência</label>
+                </div>
+            </div>
+        </div>
+
+        <div class="filter-group" style="margin-bottom: 20px;">
+            <label>TELEGRAM CHAT ID</label>
+            <input type="text" id="set-tg-chatid" placeholder="Ex: 123456789" 
+                   style="width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px 14px; font-size: 14px; font-family: 'JetBrains Mono', monospace; outline: none; margin-top:5px;">
+        </div>
+
+        <!-- TUTORIAL TELEGRAM -->
+        <div style="background: rgba(0, 136, 204, 0.1); border-left: 3px solid #0088cc; padding: 15px; border-radius: 4px; margin-bottom: 25px;">
+            <h4 style="color: #0088cc; font-size: 13px; margin-top: 0; margin-bottom: 8px;">🤖 Vincular Automaticamente</h4>
+            <p style="font-size: 12px; color: var(--text); line-height: 1.5; margin-bottom: 12px;">
+                Clique no botão abaixo para abrir o Telegram. Envie a mensagem <strong>INICIAR</strong> (ou /start) e o seu Chat ID será preenchido sozinho!
+            </p>
+            <button type="button" onclick="linkTelegram()" style="background: #0088cc; color: #fff; border: none; padding: 10px 15px; border-radius: 8px; cursor: pointer; font-family: 'Outfit', sans-serif; font-weight: 600; font-size: 12px; width: 100%; transition: 0.2s;" onmouseover="this.style.background='#0077b3'" onmouseout="this.style.background='#0088cc'">
+                🔗 VINCULAR TELEGRAM AGORA
+            </button>
+            <p style="font-size: 11px; color: var(--muted); margin-top: 12px; margin-bottom: 0;">
+                Se preferir fazer manualmente, digite o seu ID no campo acima.
+            </p>
+        </div>
+
+        <div class="export-btns">
+            <button id="btn-settings-cancel" onclick="closeSettingsModal()" style="background: var(--surface); color: var(--muted); border: 1px solid var(--border); flex: 1; padding: 11px; border-radius: 8px; cursor: pointer;">CANCELAR</button>
+            <button id="btn-settings-save" onclick="saveSettings()" style="background: var(--primary); color: #fff; border: none; flex: 1; padding: 11px; border-radius: 8px; cursor: pointer; font-weight:600;">SALVAR ALTERAÇÕES</button>
+        </div>
+    </div>
+</div>
+
 
 <!-- EXPORT MODAL -->
 <div id="export-modal">
@@ -397,6 +483,16 @@
 
     function parseJWT(t) {
         try { return JSON.parse(atob(t.split('.')[1])); } catch { return null; }
+    }
+
+    function escapeHTML(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
     }
 
     function doLogout() {
@@ -438,8 +534,12 @@
 
     // ── Load Alerts ──────────────────────────────────────────────────────────────
     async function loadAlerts() {
+        const selectAll = document.getElementById('select-all');
+        if (selectAll) selectAll.checked = false;
+        updateBulkDeleteButton();
+
         const body = document.getElementById('alerts-body');
-        body.innerHTML = '<tr class="loading-row"><td colspan="6">CARREGANDO...</td></tr>';
+        body.innerHTML = '<tr class="loading-row"><td colspan="8">CARREGANDO...</td></tr>';
 
         const params = buildParams();
         try {
@@ -452,7 +552,7 @@
             renderTable(alerts || []);
             updatePagination();
         } catch (e) {
-            body.innerHTML = `<tr class="loading-row"><td colspan="6" style="color:var(--danger)">${e.message}</td></tr>`;
+            body.innerHTML = `<tr class="loading-row"><td colspan="8" style="color:var(--danger)">${e.message}</td></tr>`;
         }
     }
 
@@ -474,22 +574,35 @@
     function renderTable(alerts) {
         const body = document.getElementById('alerts-body');
         if (!alerts.length) {
-            body.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="icon">🔍</div><p>Nenhum alerta encontrado para os filtros selecionados.</p></div></td></tr>`;
+            body.innerHTML = `<tr><td colspan="8"><div class="empty-state"><div class="icon">🔍</div><p>Nenhum alerta encontrado para os filtros selecionados.</p></div></td></tr>`;
             return;
         }
         body.innerHTML = alerts.map(a => {
             const dt = new Date(a.created_at).toLocaleString('pt-BR');
             const typeBadge = getTypeBadge(a.type);
-            const sevClass = `sev-${a.severity || 'medium'}`;
-            const sevLabel = (a.severity || 'medium').toUpperCase();
-            const conf = a.confidence || '—';
+            const sevClass = `sev-${escapeHTML(a.severity || 'medium')}`;
+            const sevLabel = escapeHTML(a.severity || 'medium').toUpperCase();
+            const conf = escapeHTML(String(a.confidence || '—'));
+            
+            const escId = escapeHTML(a.id);
+            const escUrl = escapeHTML(a.screenshot_url);
+            
             const thumb = a.screenshot_url
-                ? `<div class="thumb-container"><img src="${a.screenshot_url}" alt="screenshot" loading="lazy" onclick="openZoom('${a.screenshot_url}')"></div>`
+                ? `<div class="thumb-container"><img src="${escUrl}" alt="screenshot" loading="lazy" onclick="openZoom('${escUrl}')"></div>`
                 : '<span style="color:var(--muted);font-size:11px">SEM IMAGEM</span>';
+                
+            const userCellContent = a.users 
+                ? ((a.users.email || a.users.name) ? `${a.users.email || a.users.name}` : a.user_id) 
+                : a.user_id;
+                
             const userCell = isAdmin
-                ? `<td style="font-size:11px;color:var(--muted)">${(a.users && (a.users.email || a.users.name)) || a.user_id}</td>`
+                ? `<td style="font-size:11px;color:var(--muted)">${escapeHTML(userCellContent)}</td>`
                 : '';
+                
             return `<tr style="border-left:3px solid ${getSeverityColor(a.severity)}">
+                <td style="text-align: center;">
+                    <input type="checkbox" class="alert-checkbox" data-id="${escId}" onchange="updateBulkDeleteButton()" style="accent-color: var(--primary); cursor: pointer; width: 16px; height: 16px; vertical-align: middle;">
+                </td>
                 <td>${dt}</td>
                 <td>${typeBadge}</td>
                 <td class="${sevClass}">${sevLabel}</td>
@@ -497,7 +610,7 @@
                 ${userCell}
                 <td>${thumb}</td>
                 <td style="text-align:right">
-                    <button class="btn-sm" style="padding:4px 8px; font-size:10px;" onclick="deleteAlert('${a.id}')">🗑️</button>
+                    <button class="btn-sm" style="padding:4px 8px; font-size:10px;" onclick="deleteAlert('${escId}')">🗑️</button>
                 </td>
             </tr>`;
         }).join('');
@@ -505,10 +618,11 @@
 
     function getTypeBadge(type) {
         if (!type) return '<span class="badge badge-other">OUTRO</span>';
-        if (type.includes('QUEDA') || type.includes('FALL')) return `<span class="badge badge-fall">${type}</span>`;
-        if (type.includes('CELULAR') || type.includes('PHONE')) return `<span class="badge badge-phone">${type}</span>`;
-        if (type.includes('INATIV') || type.includes('IDLE') || type.includes('AUSENT')) return `<span class="badge badge-idle">${type}</span>`;
-        return `<span class="badge badge-other">${type}</span>`;
+        const escaped = escapeHTML(type);
+        if (type.includes('QUEDA') || type.includes('FALL')) return `<span class="badge badge-fall">${escaped}</span>`;
+        if (type.includes('CELULAR') || type.includes('PHONE')) return `<span class="badge badge-phone">${escaped}</span>`;
+        if (type.includes('INATIV') || type.includes('IDLE') || type.includes('AUSENT')) return `<span class="badge badge-idle">${escaped}</span>`;
+        return `<span class="badge badge-other">${escaped}</span>`;
     }
 
     function getSeverityColor(sev) {
@@ -590,9 +704,23 @@
                 headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
                 body: JSON.stringify({ from, to })
             });
-            const data = await r.json();
-            if (!r.ok) throw new Error(data.error || 'Erro ao exportar.');
-            window.open(data.file_url, '_blank');
+            
+            if (!r.ok) {
+                const data = await r.json();
+                throw new Error(data.error || 'Erro ao exportar.');
+            }
+            
+            // Handle file download
+            const blob = await r.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `relatorio_sentinel_${from}_a_${to}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+            
             closeExportModal();
         } catch (e) {
             alert('Erro: ' + e.message);
@@ -620,6 +748,202 @@
             alert(e.message);
         }
     }
+
+    function toggleSelectAll(master) {
+        const checkboxes = document.querySelectorAll('.alert-checkbox');
+        checkboxes.forEach(cb => cb.checked = master.checked);
+        updateBulkDeleteButton();
+    }
+
+    function updateBulkDeleteButton() {
+        const checkboxes = document.querySelectorAll('.alert-checkbox');
+        const selected = Array.from(checkboxes).filter(cb => cb.checked);
+        const btn = document.getElementById('btn-bulk-delete');
+        const countSpan = document.getElementById('selected-count');
+        const selectAll = document.getElementById('select-all');
+        
+        if (selected.length > 0) {
+            btn.style.display = 'inline-block';
+            countSpan.textContent = selected.length;
+        } else {
+            btn.style.display = 'none';
+        }
+        
+        // Keep selectAll state in sync
+        if (selectAll) {
+            if (checkboxes.length === 0) {
+                selectAll.checked = false;
+            } else {
+                selectAll.checked = selected.length === checkboxes.length;
+            }
+        }
+    }
+
+    async function deleteSelectedAlerts() {
+        const checkboxes = document.querySelectorAll('.alert-checkbox');
+        const selectedIds = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.getAttribute('data-id'));
+        if (selectedIds.length === 0) return;
+        
+        if (!confirm(`Tem certeza que deseja excluir permanentemente os ${selectedIds.length} registros selecionados?`)) return;
+        
+        const btn = document.getElementById('btn-bulk-delete');
+        btn.disabled = true;
+        btn.textContent = 'EXCLUINDO...';
+        
+        try {
+            // Tenta usar a nova API de exclusão em massa
+            const r = await fetch('/api/alerts/bulk-delete', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + token 
+                },
+                body: JSON.stringify({ ids: selectedIds })
+            });
+            
+            // Se a API retornar erro ou 404 (caso o servidor não tenha sido reiniciado)
+            if (!r.ok) {
+                if (r.status === 404) {
+                    console.log('API de exclusão em massa não encontrada (servidor antigo). Executando exclusão individual paralela...');
+                    // Fallback para deletar individualmente paralelos
+                    const promises = selectedIds.map(id => fetch(`/api/alerts/${id}`, {
+                        method: 'DELETE',
+                        headers: { 'Authorization': 'Bearer ' + token }
+                    }));
+                    
+                    const results = await Promise.all(promises);
+                    const failed = results.filter(res => !res.ok);
+                    if (failed.length > 0) {
+                        throw new Error(`Erro ao excluir alguns alertas (${failed.length} falharam).`);
+                    }
+                } else {
+                    const data = await r.json();
+                    throw new Error(data.error || 'Erro ao excluir alertas em massa.');
+                }
+            }
+            
+            // Sucesso!
+            alert(`${selectedIds.length} alertas excluídos com sucesso!`);
+            
+            // Reset state and reload
+            const selectAll = document.getElementById('select-all');
+            if (selectAll) selectAll.checked = false;
+            
+            loadAlerts();
+            loadStats();
+        } catch (e) {
+            alert('Erro ao excluir: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            updateBulkDeleteButton();
+        }
+    }
+
+    // ── Settings ─────────────────────────────────────────────────────────────────
+    function openSettingsModal() {
+        const user = JSON.parse(localStorage.getItem('sentinel_user') || '{}');
+        document.getElementById('set-tg-chatid').value = user.telegram_chat_id || '';
+        document.getElementById('set-tg-active').checked = !!user.telegram_active;
+        
+        // Setup filters
+        const filtersStr = user.telegram_filters || 'ALL';
+        const cbs = document.querySelectorAll('.tg-filter-cb');
+        if (filtersStr === 'ALL') {
+            cbs.forEach(cb => cb.checked = true);
+        } else {
+            const arr = filtersStr.split(',').map(s => s.trim().toUpperCase());
+            cbs.forEach(cb => {
+                cb.checked = arr.includes(cb.value);
+            });
+        }
+        
+        const totalSeconds = user.detection_timer || 3;
+        const h = Math.floor(totalSeconds / 3600);
+        const m = Math.floor((totalSeconds % 3600) / 60);
+        const s = totalSeconds % 60;
+        
+        document.getElementById('set-timer-h').value = h;
+        document.getElementById('set-timer-m').value = m;
+        document.getElementById('set-timer-s').value = s;
+        
+        document.getElementById('settings-modal').style.display = 'flex';
+    }
+
+    function closeSettingsModal() {
+        document.getElementById('settings-modal').style.display = 'none';
+    }
+
+    async function saveSettings() {
+        const chat_id = document.getElementById('set-tg-chatid').value;
+        const active = document.getElementById('set-tg-active').checked;
+        
+        // Get filters
+        const cbs = document.querySelectorAll('.tg-filter-cb');
+        const selected = Array.from(cbs).filter(cb => cb.checked).map(cb => cb.value);
+        let filters = 'ALL';
+        if (selected.length === 0) filters = 'NONE';
+        else if (selected.length < cbs.length) filters = selected.join(',');
+        
+        const h = parseInt(document.getElementById('set-timer-h').value) || 0;
+        const m = parseInt(document.getElementById('set-timer-m').value) || 0;
+        const s = parseInt(document.getElementById('set-timer-s').value) || 0;
+        const totalSeconds = (h * 3600) + (m * 60) + s;
+
+        const btn = document.getElementById('btn-settings-save');
+        btn.disabled = true;
+        btn.textContent = 'SALVANDO...';
+
+        try {
+            const r = await fetch('/api/user/settings', {
+                method: 'PUT',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + token 
+                },
+                body: JSON.stringify({ 
+                    telegram_chat_id: chat_id, 
+                    telegram_active: active,
+                    detection_timer: totalSeconds,
+                    telegram_filters: filters
+                })
+            });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.error || 'Erro ao salvar configurações.');
+            
+            // Update local storage
+            localStorage.setItem('sentinel_user', JSON.stringify(data.user));
+            alert('Configurações salvas com sucesso!');
+            closeSettingsModal();
+        } catch (e) {
+            alert('Erro: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'SALVAR ALTERAÇÕES';
+        }
+    }
+
+    async function linkTelegram() {
+        try {
+            const r = await fetch('/api/telegram/bot_link', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.error || 'Erro ao gerar link.');
+            
+            // Abre o bot do Telegram em outra aba
+            window.open(data.link, '_blank');
+            
+            // Avisa o usuário
+            alert('O Telegram abrirá agora!\\n\\n1. Clique em "Começar" lá no Telegram.\\n2. Feche as configurações aqui e recarregue a página para ver seu Chat ID preenchido!');
+        } catch (e) {
+            alert('Erro: ' + e.message);
+        }
+    }
+
+
+
+
+
 
     init();
 </script>

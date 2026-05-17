@@ -9,11 +9,20 @@ const https = require('https');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Validação crítica de startup: Garantir que as credenciais obrigatórias existem
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY || !process.env.JWT_SECRET) {
+    console.error('--- ERRO CRÍTICO: Variáveis de ambiente obrigatórias ausentes! ---');
+    console.error('Verifique seu arquivo .env e configure SUPABASE_URL, SUPABASE_SERVICE_KEY e JWT_SECRET.');
+    process.exit(1);
+}
 
 // ─── Supabase (service role — bypasses RLS) ───────────────────────────────────
 const supabase = createClient(
@@ -21,10 +30,79 @@ const supabase = createClient(
     process.env.SUPABASE_SERVICE_KEY
 );
 
-// ─── Middleware ────────────────────────────────────────────────────────────────
+// Garantir que o bucket de screenshots exista
+async function ensureBucket() {
+    try {
+        const { data: buckets, error } = await supabase.storage.listBuckets();
+        if (error) throw error;
+        
+        const exists = buckets?.find(b => b.name === 'screenshots');
+        if (!exists) {
+            console.log('--- AVISO: Bucket "screenshots" não encontrado. Tentando criar... ---');
+            const { error: createError } = await supabase.storage.createBucket('screenshots', {
+                public: true
+            });
+            if (createError) {
+                console.error('--- ERRO CRÍTICO: Não foi possível criar o bucket "screenshots". Crie manualmente no painel do Supabase! ---');
+                console.error('Erro:', createError.message);
+            } else {
+                console.log('--- SUCESSO: Bucket "screenshots" criado com sucesso! ---');
+            }
+        } else {
+            console.log('--- Bucket "screenshots" verificado e pronto! ---');
+        }
+    } catch (err) {
+        console.error('Erro ao verificar armazenamento:', err.message);
+    }
+}
+ensureBucket();
+
+
+
+// ─── Middleware e Proteções de Segurança ───────────────────────────────────────
+// Adiciona cabeçalhos HTTP robustos contra ataques.
+// O Content-Security-Policy é desativado para garantir compatibilidade total com
+// os carregamentos de scripts CDN do Google MediaPipe, TensorFlow e fontes no frontend.
+app.use(helmet({
+    contentSecurityPolicy: false
+}));
+
 app.use(cors());
-app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.json({ limit: '2mb' })); // Limite de payload seguro para capturas de webcam
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ─── Rate Limiters (Prevenção de Abuso e Brute-Force) ─────────────────────────
+// Limite para a API em geral (previne sobrecarga e ataques de DDoS volumétricos)
+const apiLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minuto
+    max: 500, // Limite de 500 requisições por IP
+    message: { error: 'Limite de requisições excedido. Tente novamente em breve.' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
+// Limite rígido para rotas de autenticação (cadastro/login) impedindo brute-force
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutos
+    max: 30, // Limite de 30 tentativas por IP
+    message: { error: 'Muitas tentativas de autenticação deste IP. Tente novamente em 15 minutos.' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
+// Limite para envio de novos alertas (impede inundação maliciosa de falsos positivos)
+const alertLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minuto
+    max: 100, // Limite seguro para o detector enviar imagens (1.6 alertas/segundo)
+    message: { error: 'Frequência de envio de alertas muito alta. Aguarde um instante.' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
+// Aplicar os limites nas rotas correspondentes
+app.use('/api/', apiLimiter);
+app.use('/api/auth/', authLimiter);
+app.use('/api/alert', alertLimiter);
 
 // ─── JWT Helpers ───────────────────────────────────────────────────────────────
 function signToken(payload) {
@@ -49,8 +127,32 @@ function requireAdmin(req, res, next) {
 }
 
 // ─── Notification Helpers ──────────────────────────────────────────────────────
-function sendTelegram(alert) {
-    if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) return;
+async function sendTelegram(alert, userId) {
+    if (!process.env.TELEGRAM_BOT_TOKEN) return;
+    
+    // Fetch user settings from DB
+    const { data: user, error } = await supabase
+        .from('users')
+        .select('telegram_chat_id, telegram_active, telegram_filters')
+        .eq('id', userId)
+        .single();
+
+    if (error || !user || !user.telegram_active || !user.telegram_chat_id) {
+        console.log(`Telegram skipping for user ${userId}: Active=${user?.telegram_active}, ID=${user?.telegram_chat_id}`);
+        return;
+    }
+    
+    // Check filter preferences
+    if (user.telegram_filters && user.telegram_filters !== 'ALL') {
+        const allowedTypes = user.telegram_filters.split(',').map(s => s.trim().toUpperCase());
+        const alertTypeUpperCase = (alert.type || '').toUpperCase();
+        // Check if any of the allowed substrings matches the alert type
+        const isAllowed = allowedTypes.some(t => alertTypeUpperCase.includes(t));
+        if (!isAllowed) {
+            console.log(`Telegram skipping for user ${userId}: Alert type '${alert.type}' not in filters '${user.telegram_filters}'`);
+            return;
+        }
+    }
     
     const caption = `🚨 *SENTINEL - ALERTA ATIVO*\n\n` +
                     `*Tipo:* ${alert.type}\n` +
@@ -63,9 +165,9 @@ function sendTelegram(alert) {
     let url;
 
     if (alert.screenshot_url) {
-        url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendPhoto?chat_id=${process.env.TELEGRAM_CHAT_ID}&photo=${encodeURIComponent(alert.screenshot_url)}&caption=${encodedCaption}&parse_mode=Markdown`;
+        url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendPhoto?chat_id=${user.telegram_chat_id}&photo=${encodeURIComponent(alert.screenshot_url)}&caption=${encodedCaption}&parse_mode=Markdown`;
     } else {
-        url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage?chat_id=${process.env.TELEGRAM_CHAT_ID}&text=${encodedCaption}&parse_mode=Markdown`;
+        url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage?chat_id=${user.telegram_chat_id}&text=${encodedCaption}&parse_mode=Markdown`;
     }
 
     https.get(url).on('error', (e) => console.error('Telegram Error:', e));
@@ -133,8 +235,9 @@ app.post('/api/auth/register', async (req, res) => {
         const token = signToken({ id: user.id, email: user.email, role: user.role, name: user.name });
         return res.status(201).json({ token, user: { id: user.id, email: user.email, role: user.role, name: user.name } });
     } catch (err) {
-        console.error('Register error:', err);
-        return res.status(500).json({ error: 'Erro ao registrar usuário.' });
+        console.error('Register error details:', JSON.stringify(err, null, 2));
+        console.error('Register error stack:', err);
+        return res.status(500).json({ error: `Erro ao registrar: ${err.message || 'Erro interno'}` });
     }
 });
 
@@ -145,7 +248,7 @@ app.post('/api/auth/login', async (req, res) => {
 
         const { data: user, error } = await supabase
             .from('users')
-            .select('id, email, role, name, password_hash')
+            .select('id, email, role, name, password_hash, telegram_chat_id, telegram_active, detection_timer, telegram_filters')
             .eq('email', email.toLowerCase())
             .maybeSingle();
 
@@ -155,16 +258,67 @@ app.post('/api/auth/login', async (req, res) => {
         if (!valid) return res.status(401).json({ error: 'Credenciais inválidas.' });
 
         const token = signToken({ id: user.id, email: user.email, role: user.role, name: user.name });
-        return res.json({ token, user: { id: user.id, email: user.email, role: user.role, name: user.name } });
+        return res.json({ 
+            token, 
+            user: { 
+                id: user.id, 
+                email: user.email, 
+                role: user.role, 
+                name: user.name,
+                telegram_chat_id: user.telegram_chat_id,
+                telegram_active: user.telegram_active,
+                detection_timer: user.detection_timer,
+                telegram_filters: user.telegram_filters
+            } 
+        });
     } catch (err) {
         console.error('Login error:', err);
         return res.status(500).json({ error: 'Erro ao realizar login.' });
     }
 });
 
+// ─── Settings Routes ───────────────────────────────────────────────────────────
+app.put('/api/user/settings', authenticateToken, async (req, res) => {
+    try {
+        const { telegram_chat_id, telegram_active, detection_timer, telegram_filters } = req.body;
+        
+        const { data, error } = await supabase
+            .from('users')
+            .update({ 
+                telegram_chat_id, 
+                telegram_active: !!telegram_active,
+                detection_timer: detection_timer || 5,
+                telegram_filters: telegram_filters || 'ALL'
+            })
+            .eq('id', req.user.id)
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        return res.json({ message: 'Configurações atualizadas com sucesso.', user: data });
+    } catch (err) {
+        console.error('Update settings error:', err);
+        return res.status(500).json({ error: 'Erro ao atualizar configurações.' });
+    }
+});
+
 // ─── /api/me ───────────────────────────────────────────────────────────────────
 app.get('/api/me', authenticateToken, async (req, res) => {
-    return res.json({ id: req.user.id, name: req.user.name, email: req.user.email, role: req.user.role });
+    const { data: user, error } = await supabase
+        .from('users')
+        .select('id, email, role, name, telegram_chat_id, telegram_active, detection_timer, telegram_filters')
+        .eq('id', req.user.id)
+        .single();
+    
+    if (error || !user) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    return res.json(user);
+});
+
+// ─── GET /api/telegram/bot_link ────────────────────────────────────────────────
+app.get('/api/telegram/bot_link', authenticateToken, (req, res) => {
+    if (!tgBotUsername) return res.status(500).json({ error: 'Bot não inicializado ou token inválido.' });
+    return res.json({ link: `https://t.me/${tgBotUsername}?start=${req.user.id}` });
 });
 
 // ─── POST /api/alert ───────────────────────────────────────────────────────────
@@ -183,37 +337,79 @@ app.post('/api/alert', authenticateToken, async (req, res) => {
         const base64Data = screenshot.replace(/^data:image\/jpeg;base64,/, '');
         const buffer = Buffer.from(base64Data, 'base64');
 
-        const { error: uploadError } = await supabase.storage
-            .from('screenshots')
-            .upload(filename, buffer, { contentType: 'image/jpeg', upsert: false });
+        // 1. Upload to Supabase Storage (Opcional - não trava o processo)
+        let publicUrl = null;
+        try {
+            const { error: uploadError } = await supabase.storage
+                .from('screenshots')
+                .upload(filename, buffer, { contentType: 'image/jpeg', upsert: false });
 
-        if (uploadError) throw uploadError;
+            if (!uploadError) {
+                const { data: urlData } = supabase.storage
+                    .from('screenshots')
+                    .getPublicUrl(filename);
+                publicUrl = urlData?.publicUrl;
+            } else {
+                console.warn('Aviso: Foto não salva (Bucket não encontrado ou erro de permissão).');
+            }
+        } catch (storageErr) {
+            console.error('Erro de Storage (Foto ignorada):', storageErr.message);
+        }
 
-        const { data: { publicUrl } } = supabase.storage
-            .from('screenshots')
-            .getPublicUrl(filename);
+        // 2. Insert alert into DB
+        // Criamos o objeto básico primeiro
+        const alertData = {
+            id: alertId,
+            user_id: userId,
+            type,
+            severity,
+            confidence,
+            description,
+            screenshot_url: publicUrl
+        };
 
-        // Insert alert into DB
-        const { data: alert, error: dbError } = await supabase
+        // Adicionamos resolved e modules apenas como garantia, 
+        // mas o SQL acima deve resolver a estrutura.
+        alertData.resolved = false;
+        alertData.modules = modules || [];
+
+        let { data: alert, error: dbError } = await supabase
             .from('alerts')
-            .insert({
-                id: alertId,
-                user_id: userId,
-                type,
-                severity,
-                confidence,
-                description,
-                modules: modules || [],
-                screenshot_url: publicUrl,
-                resolved: false
-            })
+            .insert(alertData)
             .select()
             .single();
 
-        if (dbError) throw dbError;
+        // MODO DE COMPATIBILIDADE: Se o schema estiver desatualizado, tenta salvar sem as colunas extras
+        if (dbError && dbError.code === 'PGRST204') {
+            console.warn('--- AVISO: Banco de dados desatualizado. Entrando em modo de compatibilidade... ---');
+            const fallbackData = {
+                id: alertId,
+                user_id: userId,
+                type: alertData.type,
+                severity: alertData.severity,
+                confidence: alertData.confidence,
+                description: alertData.description
+            };
+            
+            const retry = await supabase
+                .from('alerts')
+                .insert(fallbackData)
+                .select()
+                .single();
+            
+            alert = retry.data;
+            dbError = retry.error;
+        }
+
+        if (dbError) {
+            console.error('DATABASE ERROR:', dbError);
+            throw dbError;
+        }
+
+
 
         // Notifications
-        sendTelegram(alert);
+        sendTelegram(alert, userId);
         sendEmail(alert);
         sendWebhook(alert);
 
@@ -244,10 +440,12 @@ app.get('/api/alerts', authenticateToken, async (req, res) => {
 
         if (type && type !== 'all') query = query.ilike('type', `%${type}%`);
         if (severity && severity !== 'all') query = query.eq('severity', severity);
-        if (from) query = query.gte('created_at', new Date(from).toISOString());
+        if (from) {
+            const fromDate = new Date(`${from}T00:00:00`);
+            query = query.gte('created_at', fromDate.toISOString());
+        }
         if (to) {
-            const toDate = new Date(to);
-            toDate.setHours(23, 59, 59, 999);
+            const toDate = new Date(`${to}T23:59:59.999`);
             query = query.lte('created_at', toDate.toISOString());
         }
 
@@ -293,14 +491,14 @@ app.post('/api/reports/export', authenticateToken, async (req, res) => {
         const { from, to } = req.body;
         if (!from || !to) return res.status(400).json({ error: 'from e to são obrigatórios.' });
 
+        const fromDate = new Date(`${from}T00:00:00`);
+        const toDate = new Date(`${to}T23:59:59`);
+
         let query = supabase
             .from('alerts')
             .select('*')
-            .gte('created_at', new Date(from).toISOString());
-
-        const toDate = new Date(to);
-        toDate.setHours(23, 59, 59, 999);
-        query = query.lte('created_at', toDate.toISOString());
+            .gte('created_at', fromDate.toISOString())
+            .lte('created_at', toDate.toISOString());
 
         if (req.user.role !== 'admin') {
             query = query.eq('user_id', req.user.id);
@@ -311,43 +509,49 @@ app.post('/api/reports/export', authenticateToken, async (req, res) => {
         const { data: alerts, error } = await query;
         if (error) throw error;
 
-        const lines = alerts.map(a =>
-            `[${new Date(a.created_at).toLocaleString('pt-BR')}] TIPO: ${a.type} | SEVERIDADE: ${a.severity} | CONFIANÇA: ${a.confidence}% | DESC: ${a.description || 'N/A'}`
-        );
-        const header = `RELATÓRIO SENTINEL\nPeríodo: ${from} a ${to}\nGerado em: ${new Date().toLocaleString('pt-BR')}\nTotal de alertas: ${alerts.length}\n${'─'.repeat(80)}\n`;
-        const content = header + lines.join('\n');
+        // Gerar conteúdo CSV
+        const header = 'Data,Hora,Tipo,Severidade,Confiança,Descrição\n';
+        const rows = alerts.map(a => {
+            const dateObj = new Date(a.created_at);
+            const dataStr = dateObj.toLocaleDateString('pt-BR');
+            const horaStr = dateObj.toLocaleTimeString('pt-BR');
+            const desc = (a.description || '').replace(/"/g, '""'); // Escape double quotes
+            return `"${dataStr}","${horaStr}","${a.type}","${a.severity}","${a.confidence}%","${desc}"`;
+        });
+        
+        const csvContent = header + rows.join('\n');
 
-        const reportId = uuidv4();
-        const filename = `${req.user.id}/report_${reportId}.txt`;
-        const buffer = Buffer.from(content, 'utf-8');
-
-        const { error: uploadError } = await supabase.storage
-            .from('reports')
-            .upload(filename, buffer, { contentType: 'text/plain', upsert: false });
-
-        if (uploadError) throw uploadError;
-
-        const { data: { publicUrl } } = supabase.storage
-            .from('reports')
-            .getPublicUrl(filename);
-
-        const { error: dbError } = await supabase
-            .from('reports')
-            .insert({
-                id: reportId,
-                user_id: req.user.id,
-                from_date: from,
-                to_date: to,
-                file_url: publicUrl,
-                alert_count: alerts.length
-            });
-
-        if (dbError) throw dbError;
-
-        return res.json({ file_url: publicUrl });
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="relatorio_${from}_a_${to}.csv"`);
+        
+        return res.send(Buffer.from('\uFEFF' + csvContent, 'utf-8')); // \uFEFF is BOM for Excel UTF-8 support
     } catch (err) {
         console.error('Export error:', err);
         return res.status(500).json({ error: 'Erro ao exportar relatório.' });
+    }
+});
+
+// ─── POST /api/alerts/bulk-delete ──────────────────────────────────────────────
+app.post('/api/alerts/bulk-delete', authenticateToken, async (req, res) => {
+    try {
+        const { ids } = req.body;
+        if (!ids || !Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ error: 'Lista de IDs inválida.' });
+        }
+
+        let query = supabase.from('alerts').delete().in('id', ids);
+
+        if (req.user.role !== 'admin') {
+            query = query.eq('user_id', req.user.id);
+        }
+
+        const { error } = await query;
+        if (error) throw error;
+
+        return res.json({ message: `${ids.length} alerta(s) excluído(s) com sucesso.` });
+    } catch (err) {
+        console.error('Bulk delete error:', err);
+        return res.status(500).json({ error: 'Erro ao remover alertas.' });
     }
 });
 
@@ -393,6 +597,86 @@ app.get('/dashboard', (req, res) => {
 });
 
 // ─── Start ─────────────────────────────────────────────────────────────────────
+startTelegramPolling();
+
 app.listen(PORT, () => {
     console.log(`SENTINEL Server running at http://localhost:${PORT}`);
 });
+
+// ─── Telegram Bot Polling ──────────────────────────────────────────────────────
+let tgBotUsername = null;
+let lastUpdateId = 0;
+
+async function startTelegramPolling() {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) return;
+
+    https.get(`https://api.telegram.org/bot${token}/getMe`, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+            try {
+                const response = JSON.parse(data);
+                if (response.ok && response.result.username) {
+                    tgBotUsername = response.result.username;
+                    console.log(`[Telegram] Bot iniciado como @${tgBotUsername}`);
+                    pollTelegram();
+                }
+            } catch(e) {}
+        });
+    }).on('error', () => {});
+}
+
+function pollTelegram() {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) return;
+    
+    const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`;
+    https.get(url, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', async () => {
+            try {
+                const response = JSON.parse(data);
+                if (response.ok && response.result && response.result.length > 0) {
+                    for (const update of response.result) {
+                        lastUpdateId = update.update_id;
+                        if (update.message && update.message.text) {
+                            const text = update.message.text;
+                            const chatId = update.message.chat.id;
+                            
+                            console.log(`[Telegram] Mensagem recebida de ${chatId}: ${text}`);
+                            
+                            if (text.startsWith('/start ')) {
+                                const userId = text.split(' ')[1];
+                                
+                                const { error } = await supabase.from('users').update({ 
+                                    telegram_chat_id: String(chatId), 
+                                    telegram_active: true 
+                                }).eq('id', userId);
+
+                                if (!error) {
+                                    const msg = encodeURIComponent(`✅ *Sucesso!* Seu Telegram foi vinculado à sua conta do SENTINEL.\n\nVocê receberá alertas de segurança diretamente aqui.`);
+                                    https.get(`https://api.telegram.org/bot${token}/sendMessage?chat_id=${chatId}&text=${msg}&parse_mode=Markdown`);
+                                    console.log(`[Telegram] Usuário ${userId} vinculado ao chat ${chatId}`);
+                                } else {
+                                    console.error('[Telegram] Erro ao vincular:', error);
+                                }
+                            } else if (text === '/start') {
+                                const msg = encodeURIComponent(`⚠️ Para vincular seu Telegram, por favor, vá até o **Dashboard** da plataforma SENTINEL, abra as Configurações e clique no botão "Vincular Telegram".`);
+                                https.get(`https://api.telegram.org/bot${token}/sendMessage?chat_id=${chatId}&text=${msg}&parse_mode=Markdown`);
+                            }
+                        }
+                    }
+                }
+            } catch(e) {
+                console.error('[Telegram Polling] Parse Error:', e.message);
+            }
+            // CONTINUE POLLING (with a small delay to prevent tight loops on API errors)
+            setTimeout(pollTelegram, 1000);
+        });
+    }).on('error', (err) => {
+        console.error('[Telegram Polling] Network Error:', err.message);
+        setTimeout(pollTelegram, 5000);
+    });
+}

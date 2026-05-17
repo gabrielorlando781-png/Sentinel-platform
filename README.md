@@ -11,6 +11,7 @@ SENTINEL é um sistema de monitoramento de trabalhadores em tempo real utilizand
     ```
 3.  **Configure as variáveis de ambiente**:
     - Copie o arquivo `.env.example` para `.env`.
+    - Preencha as credenciais obrigatórias do **Supabase** (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`) e o **JWT_SECRET**.
     - (Opcional) Preencha os dados de Telegram, SMTP ou Webhooks.
 4.  **Inicie o servidor**:
     ```bash
@@ -41,9 +42,9 @@ Acesse `http://localhost:3000/dashboard` para visualizar o histórico de alertas
 
 ## 📋 Módulos de Detecção
 
-- **Idle Detection**: Monitora o score de movimento baseado em landmarks (punhos, cotovelos, ombros e cabeça). Dispara alerta após 15s de inatividade.
-- **Phone Detection**: Combina o modelo COCO-SSD (detecção de objeto) com a proximidade dos punhos (MediaPipe). Dispara após 5s de uso confirmado.
-- **Fall Detection**: Utiliza métricas invariantes de escala (ângulo da espinha, compressão vertical e fração hip-to-ankle). Possui dois níveis de severidade.
+- **Idle Detection**: Monitora o score de movimento baseado em landmarks (punhos, cotovelos, ombros e cabeça). O limite de tempo é configurável pelo usuário diretamente no HUD (padrão 15s).
+- **Object & Phone Detection**: Utiliza COCO-SSD para identificar todos os objetos na cena, com lógica especializada para detectar uso de celular baseado na proximidade dos punhos e heurísticas posturais.
+- **Fall Detection**: Sistema de dois estágios: 'Possível Queda' (detecção inicial de postura horizontal) e 'Queda Confirmada' (após 5 segundos de imobilidade no chão).
 
 ---
 
