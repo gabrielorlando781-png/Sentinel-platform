@@ -479,7 +479,7 @@
     const token = localStorage.getItem('sentinel_token');
 
     // ── Auth Guard ──────────────────────────────────────────────────────────────
-    if (!token) { location.href = '/'; }
+    if (!token) { location.href = '/?redirect=dashboard'; }
 
     function parseJWT(t) {
         try { return JSON.parse(atob(t.split('.')[1])); } catch { return null; }
@@ -509,7 +509,21 @@
         // Validate with server
         try {
             const r = await fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + token } });
-            if (!r.ok) { doLogout(); return; }
+            if (!r.ok) {
+                if (r.status === 401 || r.status === 403) {
+                    doLogout();
+                } else {
+                    console.warn('Erro do servidor ao validar sessão:', r.status);
+                    const user = JSON.parse(localStorage.getItem('sentinel_user') || '{}');
+                    isAdmin = user.role === 'admin';
+                    document.getElementById('header-email').textContent = user.email || 'offline';
+                    if (isAdmin) {
+                        document.getElementById('badge-admin').style.display = 'inline-block';
+                        document.getElementById('col-user').style.display = '';
+                    }
+                }
+                return;
+            }
             const user = await r.json();
             isAdmin = user.role === 'admin';
             document.getElementById('header-email').textContent = user.email;
@@ -517,7 +531,16 @@
                 document.getElementById('badge-admin').style.display = 'inline-block';
                 document.getElementById('col-user').style.display = '';
             }
-        } catch { doLogout(); return; }
+        } catch (e) {
+            console.error('Erro de rede ao validar sessão:', e);
+            const user = JSON.parse(localStorage.getItem('sentinel_user') || '{}');
+            isAdmin = user.role === 'admin';
+            document.getElementById('header-email').textContent = (user.email || 'offline') + ' (Offline)';
+            if (isAdmin) {
+                document.getElementById('badge-admin').style.display = 'inline-block';
+                document.getElementById('col-user').style.display = '';
+            }
+        }
 
         // Set default date range (last 30 days)
         const today = new Date();
