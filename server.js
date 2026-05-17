@@ -69,6 +69,20 @@ app.use(helmet({
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '2mb' })); // Limite de payload seguro para capturas de webcam
+
+// Desabilita cache estrito para arquivos HTML para evitar que o navegador armazene cache
+// local das páginas do dashboard e login (evitando redirecionamentos infinitos pós-logout)
+app.use((req, res, next) => {
+    const isHtml = req.path.endsWith('.html') || req.path === '/' || req.path === '/dashboard';
+    if (isHtml) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.setHeader('Surrogate-Control', 'no-store');
+    }
+    next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── Rate Limiters (Prevenção de Abuso e Brute-Force) ─────────────────────────
@@ -206,6 +220,11 @@ function sendWebhook(alert) {
     req.write(data);
     req.end();
 }
+
+// ─── Health / Ping Route (Keep Awake) ──────────────────────────────────────────
+app.get('/ping', (req, res) => {
+    res.status(200).json({ status: 'OK', message: 'Sentinel is awake!', timestamp: new Date() });
+});
 
 // ─── Auth Routes ───────────────────────────────────────────────────────────────
 app.post('/api/auth/register', async (req, res) => {
@@ -601,6 +620,21 @@ startTelegramPolling();
 
 app.listen(PORT, () => {
     console.log(`SENTINEL Server running at http://localhost:${PORT}`);
+    
+    // Auto-ping de auto-preservação (para não desligar no Render)
+    const renderUrl = process.env.RENDER_EXTERNAL_URL;
+    if (renderUrl) {
+        console.log(`[Keep Awake] Auto-ping configurado para ${renderUrl}/ping a cada 10 minutos.`);
+        setInterval(() => {
+            https.get(`${renderUrl}/ping`, (res) => {
+                console.log(`[Keep Awake] Auto-ping status: ${res.statusCode}`);
+            }).on('error', (err) => {
+                console.error('[Keep Awake] Erro no auto-ping:', err.message);
+            });
+        }, 10 * 60 * 1000); // 10 minutos
+    } else {
+        console.log('[Keep Awake] RENDER_EXTERNAL_URL não encontrada. Para ativar o auto-ping local, configure essa variável.');
+    }
 });
 
 // ─── Telegram Bot Polling ──────────────────────────────────────────────────────

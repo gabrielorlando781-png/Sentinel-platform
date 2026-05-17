@@ -1295,13 +1295,19 @@
             // Check if there is a pending redirect
             const urlParams = new URLSearchParams(window.location.search);
             if (urlParams.get('redirect') === 'dashboard') {
-                location.href = '/dashboard';
+                location.href = '/dashboard?_t=' + Date.now();
                 return;
             }
 
             document.getElementById('auth-modal').style.display = 'none';
             document.getElementById('user-header').style.display = 'flex';
             document.getElementById('header-user-name').textContent = user.name || user.email;
+            
+            // Set dynamic cache-buster for dashboard link
+            const dashboardLink = document.getElementById('link-dashboard');
+            if (dashboardLink) {
+                dashboardLink.href = '/dashboard?_t=' + Date.now();
+            }
             init();
         }
 
@@ -1350,6 +1356,12 @@
                     document.getElementById('auth-modal').style.display = 'none';
                     document.getElementById('user-header').style.display = 'flex';
                     document.getElementById('header-user-name').textContent = user.name || user.email;
+                    
+                    // Set dynamic cache-buster for dashboard link
+                    const dashboardLink = document.getElementById('link-dashboard');
+                    if (dashboardLink) {
+                        dashboardLink.href = '/dashboard?_t=' + Date.now();
+                    }
                     init();
                 })
                 .catch(err => {
@@ -1366,6 +1378,12 @@
                         document.getElementById('auth-modal').style.display = 'none';
                         document.getElementById('user-header').style.display = 'flex';
                         document.getElementById('header-user-name').textContent = (cachedUser.name || cachedUser.email || "Usuário") + " (Offline)";
+                        
+                        // Set dynamic cache-buster for dashboard link
+                        const dashboardLink = document.getElementById('link-dashboard');
+                        if (dashboardLink) {
+                            dashboardLink.href = '/dashboard?_t=' + Date.now();
+                        }
                         init();
                     }
                 });

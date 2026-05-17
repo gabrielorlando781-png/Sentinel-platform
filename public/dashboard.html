@@ -340,7 +340,7 @@
         <div class="filter-spacer"></div>
         <button id="btn-bulk-delete" class="btn-sm" style="display: none; background: var(--danger); border-color: var(--danger); color: white; font-weight: 600; margin-right: 10px;" onclick="deleteSelectedAlerts()">🗑️ EXCLUIR SELECIONADOS (<span id="selected-count">0</span>)</button>
         <button class="btn-primary" onclick="openExportModal()">⬇ EXPORTAR RELATÓRIO</button>
-        <button class="btn-sm" style="color:var(--primary);border-color:var(--primary)" onclick="window.close() || (window.location.href='/')">◀ VOLTAR (FECHAR DASHBOARD)</button>
+        <button class="btn-sm" style="color:var(--primary);border-color:var(--primary)" onclick="window.close() || (window.location.href='/?_t=' + Date.now())">◀ VOLTAR (FECHAR DASHBOARD)</button>
     </div>
 
     <div class="table-wrapper">
@@ -498,7 +498,7 @@
     function doLogout() {
         localStorage.removeItem('sentinel_token');
         localStorage.removeItem('sentinel_user');
-        location.href = '/';
+        location.href = '/?_t=' + Date.now();
     }
 
     // ── Init ─────────────────────────────────────────────────────────────────────
