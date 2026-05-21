@@ -580,6 +580,8 @@
         const PHONE_CONFIRM_DELAY = 2000; // ms
         const FALL_POSSIBLE_DELAY = 500; // ms to trigger 'Possible'
         let FALL_CONFIRMED_DELAY = 5000; // default 5s, will be updated by user settings
+        const FALL_ALERT_COOLDOWN_MS = 60000; // 60s de cooldown após alerta de queda disparar
+        const PHONE_SUSTAINED_MS = 20000;     // 20s contínuos de evidência antes de alertar uso de celular
 
         // Configurações Heurísticas de Postura e Celular
         const WRIST_HIP_MARGIN = 0.05; // Margem para punho acima do quadril
@@ -601,8 +603,10 @@
             phoneInHand: false,
             phoneInHandStartTime: null,
             phoneAlertFired: false,
+            phoneSustainedSince: null,  // timestamp de quando o score pre-alerta foi atingido
             fallTier: 0, // 0 (normal), 1 (possible), 2 (confirmed)
             fallStartTime: null,
+            fallLastAlertTime: 0,       // timestamp do último alerta de queda disparado
             fallAlertFired: false,
             fallConfirmedAlertFired: false,
             lastDetections: [],
@@ -994,25 +998,39 @@
                     state.phoneSuspicionScore = Math.min(30, state.phoneSuspicionScore);
                 }
 
-                // Disparar alerta se score atingiu o limiar
-                if (!cooldownActive && state.phoneSuspicionScore >= SCORE_ALERT_THRESHOLD) {
-                    const activeModules = [];
-                    if (wristAboveHip) activeModules.push('WRIST_ABOVE_HIP');
-                    if (elbowFlexion)  activeModules.push('ELBOW_FLEXION');
-                    if (headTiltDown)  activeModules.push('HEAD_TILT');
-                    if (wristStable)   activeModules.push('WRIST_STABILITY');
-                    if (handNearFace)  activeModules.push('HAND_NEAR_FACE');
-                    if (isPhoneDetected) activeModules.push('COCO_SSD');
-                    if (isHoldingPhone)  activeModules.push('HOLDING_OBJECT');
+                // Disparar alerta se score atingiu o limiar E 20s contínuos se passaram
+                // PRE-LIMIAR: score >= 8 dá início ao timer de 20s
+                const PRE_THRESHOLD = 8;
+                if (!cooldownActive && state.phoneSuspicionScore >= PRE_THRESHOLD) {
+                    if (!state.phoneSustainedSince) {
+                        state.phoneSustainedSince = Date.now(); // início do timer
+                    }
+                    const sustainedMs = Date.now() - state.phoneSustainedSince;
 
-                    triggerAlert('USO DE CELULAR', activeModules);
-                    state.phoneSuspicionScore = 0;
-                    state.lastPhoneAlertTime = Date.now();
+                    if (sustainedMs >= PHONE_SUSTAINED_MS && state.phoneSuspicionScore >= SCORE_ALERT_THRESHOLD) {
+                        const activeModules = [];
+                        if (wristAboveHip) activeModules.push('WRIST_ABOVE_HIP');
+                        if (elbowFlexion)  activeModules.push('ELBOW_FLEXION');
+                        if (headTiltDown)  activeModules.push('HEAD_TILT');
+                        if (wristStable)   activeModules.push('WRIST_STABILITY');
+                        if (handNearFace)  activeModules.push('HAND_NEAR_FACE');
+                        if (isPhoneDetected) activeModules.push('COCO_SSD');
+                        if (isHoldingPhone)  activeModules.push('HOLDING_OBJECT');
+
+                        triggerAlert('USO DE CELULAR', activeModules);
+                        state.phoneSuspicionScore = 0;
+                        state.phoneSustainedSince = null;
+                        state.lastPhoneAlertTime = Date.now();
+                    }
+                } else if (!cooldownActive) {
+                    // Score caiu abaixo do pré-limiar — reinicia o timer
+                    state.phoneSustainedSince = null;
                 }
 
                 // Resolver alerta: requer ausência total de evidências
                 if (metricsActive === 0 && !isHoldingPhone && !isPhoneDetected) {
                     resolveAlert('USO DE CELULAR');
+                    state.phoneSustainedSince = null; // garante reset do timer
                 }
 
                 // Atualizar variáveis de estado para HUD e overlay visual
@@ -1027,19 +1045,26 @@
             if (fallEvaluation > 0) {
                 if (!state.fallStartTime) state.fallStartTime = Date.now();
                 const fallElapsed = Date.now() - state.fallStartTime;
+                const fallCooldownActive = (Date.now() - state.fallLastAlertTime) < FALL_ALERT_COOLDOWN_MS;
 
                 // Queda Crítica (Detector Score >= 0.9): Disparo quase instantâneo (0.1s)
                 if (fallEvaluation === 2 || fallElapsed >= FALL_CONFIRMED_DELAY) {
-                    if (state.fallTier !== 2) {
+                    if (state.fallTier !== 2 && !fallCooldownActive) {
                         state.fallTier = 2;
+                        state.fallLastAlertTime = Date.now();
                         triggerAlert('QUEDA CONFIRMADA', ['CRITICAL_SCORE', 'STABILITY_>5S']);
+                    } else if (state.fallTier !== 2) {
+                        state.fallTier = 2; // atualiza tier sem re-disparar
                     }
                 } 
                 // Queda Suspeita (Detector Score >= 0.5): Requer 0.5s de estabilidade
                 else if (fallElapsed >= 500) {
-                    if (state.fallTier !== 1) {
+                    if (state.fallTier !== 1 && !fallCooldownActive) {
                         state.fallTier = 1;
+                        state.fallLastAlertTime = Date.now();
                         triggerAlert('POSSÍVEL QUEDA', ['MULTI_DETECTOR_V4', 'SUSPICIOUS_POSTURE']);
+                    } else if (state.fallTier !== 1) {
+                        state.fallTier = 1; // atualiza tier sem re-disparar
                     }
                 }
             } else {
