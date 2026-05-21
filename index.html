@@ -858,86 +858,35 @@
                     return (varX / history.length) + (varY / history.length);
                 };
 
-                // Calculate helper distances
-                const getDistance = (p1, p2) => {
-                    return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
-                };
+                // 1. Metric: Wrist above hip (Y-axis is inverted: 0 is top, 1 is bottom)
+                const leftWristAboveHip = leftWristVisible && leftHipVisible && (wristL.y < hipL.y - WRIST_HIP_MARGIN);
+                const rightWristAboveHip = rightWristVisible && rightHipVisible && (wristR.y < hipR.y - WRIST_HIP_MARGIN);
+                const wristAboveHip = leftWristAboveHip || rightWristAboveHip;
 
-                // Helper to calculate joint angle in 2D space (shoulder -> elbow -> wrist)
-                const getJointAngle = (s, e, w) => {
-                    const v1 = { x: s.x - e.x, y: s.y - e.y };
-                    const v2 = { x: w.x - e.x, y: w.y - e.y };
-                    const dot = v1.x * v2.x + v1.y * v2.y;
-                    const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
-                    const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
-                    if (mag1 === 0 || mag2 === 0) return 0;
-                    const cosAngle = Math.max(-1, Math.min(1, dot / (mag1 * mag2)));
-                    return Math.acos(cosAngle) * (180 / Math.PI);
-                };
-
-                // Helper to calculate variance of coordinates (sum of variances of x and y)
-                const getVariance = (history) => {
-                    if (history.length < 30) return Infinity;
-                    let sumX = 0, sumY = 0;
-                    for (let i = 0; i < history.length; i++) {
-                        sumX += history[i].x;
-                        sumY += history[i].y;
-                    }
-                    const meanX = sumX / history.length;
-                    const meanY = sumY / history.length;
-                    
-                    let varX = 0, varY = 0;
-                    for (let i = 0; i < history.length; i++) {
-                        varX += Math.pow(history[i].x - meanX, 2);
-                        varY += Math.pow(history[i].y - meanY, 2);
-                    }
-                    return (varX / history.length) + (varY / history.length);
-                };
-
-                // Calculate angles
+                // 2. Metric: Elbow flexion angle
                 const leftAngle = leftArmValid ? getJointAngle(shoulderL, elbowL, wristL) : 0;
                 const rightAngle = rightArmValid ? getJointAngle(shoulderR, elbowR, wristR) : 0;
+                const leftElbowFlexion = leftArmValid && leftAngle >= ELBOW_MIN_ANGLE && leftAngle <= ELBOW_MAX_ANGLE;
+                const rightElbowFlexion = rightArmValid && rightAngle >= ELBOW_MIN_ANGLE && rightAngle <= ELBOW_MAX_ANGLE;
+                const elbowFlexion = leftElbowFlexion || rightElbowFlexion;
 
-                // Calculate variances
+                // 3. Metric: Head tilt down (nose y coordinate exceeds shoulder average y plus threshold)
+                const avgShoulderY = shouldersValid ? (shoulderL.y + shoulderR.y) / 2 : 0;
+                const headTiltDown = noseValid && shouldersValid && (nose.y > avgShoulderY + HEAD_TILT_THRESHOLD);
+
+                // 4. Metric: Wrist position stability (variance is low, indicating hand is held still holding phone)
                 const leftVar = leftArmValid ? getVariance(state.leftWristHistory) : Infinity;
                 const rightVar = rightArmValid ? getVariance(state.rightWristHistory) : Infinity;
-
-                // Hand-specific metrics
-                const leftWristAboveElbow = leftArmValid && (wristL.y < elbowL.y - 0.03);
-                const leftWristCloseToFace = leftWristVisible && noseValid && (getDistance(wristL, nose) < 0.35);
                 const leftWristStable = leftArmValid && leftVar < WRIST_STABILITY_VARIANCE;
-                const leftElbowFlexion = leftArmValid && leftAngle >= ELBOW_MIN_ANGLE && leftAngle <= ELBOW_MAX_ANGLE;
-
-                const rightWristAboveElbow = rightArmValid && (wristR.y < elbowR.y - 0.03);
-                const rightWristCloseToFace = rightWristVisible && noseValid && (getDistance(wristR, nose) < 0.35);
                 const rightWristStable = rightArmValid && rightVar < WRIST_STABILITY_VARIANCE;
-                const rightElbowFlexion = rightArmValid && rightAngle >= ELBOW_MIN_ANGLE && rightAngle <= ELBOW_MAX_ANGLE;
+                const wristStable = leftWristStable || rightWristStable;
 
-                // Compute total phone posture score per hand (max 3.5)
-                let leftHandScore = 0;
-                if (leftArmValid) {
-                    if (leftWristAboveElbow) leftHandScore += 1.0;
-                    if (leftWristCloseToFace) leftHandScore += 1.0;
-                    if (leftWristStable) leftHandScore += 1.0;
-                    if (leftElbowFlexion) leftHandScore += 0.5;
-                }
-
-                let rightHandScore = 0;
-                if (rightArmValid) {
-                    if (rightWristAboveElbow) rightHandScore += 1.0;
-                    if (rightWristCloseToFace) rightHandScore += 1.0;
-                    if (rightWristStable) rightHandScore += 1.0;
-                    if (rightElbowFlexion) rightHandScore += 0.5;
-                }
-
-                // Head tilt down (nose y coordinate exceeds average shoulder y minus threshold)
-                const avgShoulderY = shouldersValid ? (shoulderL.y + shoulderR.y) / 2 : 0;
-                const headTiltDown = noseValid && shouldersValid && (nose.y > avgShoulderY - 0.08);
-
-                // Hand activity validation: requires score >= 2.0 to confirm phone holding posture
-                const leftHandActive = leftArmValid && leftHandScore >= 2.0;
-                const rightHandActive = rightArmValid && rightHandScore >= 2.0;
-                const handActive = leftHandActive || rightHandActive;
+                // Count active postural metrics
+                let metricsActive = 0;
+                if (wristAboveHip) metricsActive++;
+                if (elbowFlexion) metricsActive++;
+                if (headTiltDown) metricsActive++;
+                if (wristStable) metricsActive++;
 
                 const now = Date.now();
                 const cooldownActive = state.lastPhoneAlertTime && (now - state.lastPhoneAlertTime < ALERT_COOLDOWN_MS);
@@ -945,15 +894,13 @@
                 if (cooldownActive) {
                     state.phoneSuspicionScore = 0;
                 } else {
-                    // Update score accumulator based on active hand holding posture and head tilt
-                    if (handActive) {
-                        if (headTiltDown) {
-                            state.phoneSuspicionScore += 2.0;
-                        } else {
-                            state.phoneSuspicionScore += 0.75;
-                        }
-                    } else {
-                        state.phoneSuspicionScore = Math.max(0, state.phoneSuspicionScore - 1.5);
+                    // Update score accumulator
+                    if (metricsActive >= 2) {
+                        state.phoneSuspicionScore += 1.5;
+                    } else if (metricsActive === 1) {
+                        state.phoneSuspicionScore += 0.5;
+                    } else if (metricsActive === 0) {
+                        state.phoneSuspicionScore = Math.max(0, state.phoneSuspicionScore - 1);
                     }
 
                     // COCO-SSD detection bonus (+5 immediately)
@@ -968,10 +915,10 @@
                 // Trigger alert if score matches or exceeds threshold
                 if (!cooldownActive && state.phoneSuspicionScore >= SCORE_ALERT_THRESHOLD) {
                     const activeModules = [];
-                    if (leftWristAboveElbow || rightWristAboveElbow) activeModules.push('WRIST_ABOVE_ELBOW');
-                    if (leftWristCloseToFace || rightWristCloseToFace) activeModules.push('WRIST_CLOSE_TO_FACE');
-                    if (leftWristStable || rightWristStable) activeModules.push('WRIST_STABILITY');
+                    if (wristAboveHip) activeModules.push('WRIST_ABOVE_HIP');
+                    if (elbowFlexion) activeModules.push('ELBOW_FLEXION');
                     if (headTiltDown) activeModules.push('HEAD_TILT');
+                    if (wristStable) activeModules.push('WRIST_STABILITY');
                     if (lastPhoneDetections && lastPhoneDetections.length > 0) activeModules.push('COCO_SSD');
 
                     triggerAlert('USO DE CELULAR', activeModules);
@@ -979,14 +926,14 @@
                     state.lastPhoneAlertTime = Date.now();
                 }
 
-                // Resolve alert if no hand is active
-                if (!handActive) {
+                // Resolve alert if no metrics are active
+                if (metricsActive === 0) {
                     resolveAlert('USO DE CELULAR');
                 }
 
                 // Update state variables for visual output (HUD and skeleton overlay styling)
-                state.phoneInHand = (state.phoneSuspicionScore >= SCORE_ALERT_THRESHOLD) || (handActive && (leftHandScore >= 2.5 || rightHandScore >= 2.5)) || (lastPhoneDetections.length > 0 && handActive);
-                state.phoneDetected = (state.phoneSuspicionScore >= 5) || handActive || (lastPhoneDetections.length > 0);
+                state.phoneInHand = (state.phoneSuspicionScore >= SCORE_ALERT_THRESHOLD) || (metricsActive >= 2) || (lastPhoneDetections.length > 0 && metricsActive >= 1);
+                state.phoneDetected = (state.phoneSuspicionScore >= 5) || (metricsActive >= 1) || (lastPhoneDetections.length > 0);
             }
 
             // FALL DETECTION
