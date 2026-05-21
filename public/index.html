@@ -807,22 +807,25 @@
                 const elbowR = landmarks[14];
                 const nose = landmarks[0];
 
-                const leftWristVisible = wristL && wristL.visibility > 0.5;
-                const rightWristVisible = wristR && wristR.visibility > 0.5;
-                const leftHipVisible = hipL && hipL.visibility > 0.5;
-                const rightHipVisible = hipR && hipR.visibility > 0.5;
+                // Relax visibility thresholds if a phone is detected by COCO-SSD
+                const minVisibility = (lastPhoneDetections && lastPhoneDetections.length > 0) ? 0.20 : 0.35;
+
+                const leftWristVisible = wristL && wristL.visibility > minVisibility;
+                const rightWristVisible = wristR && wristR.visibility > minVisibility;
+                const leftHipVisible = hipL && hipL.visibility > minVisibility;
+                const rightHipVisible = hipR && hipR.visibility > minVisibility;
                 const leftArmValid = shoulderL && elbowL && wristL && 
-                                     shoulderL.visibility > 0.5 && 
-                                     elbowL.visibility > 0.5 && 
+                                     shoulderL.visibility > minVisibility && 
+                                     elbowL.visibility > minVisibility && 
                                      leftWristVisible;
                 const rightArmValid = shoulderR && elbowR && wristR && 
-                                      shoulderR.visibility > 0.5 && 
-                                      elbowR.visibility > 0.5 && 
+                                      shoulderR.visibility > minVisibility && 
+                                      elbowR.visibility > minVisibility && 
                                       rightWristVisible;
-                const noseValid = nose && nose.visibility > 0.5;
+                const noseValid = nose && nose.visibility > minVisibility;
                 const shouldersValid = shoulderL && shoulderR && 
-                                       shoulderL.visibility > 0.5 && 
-                                       shoulderR.visibility > 0.5;
+                                       shoulderL.visibility > minVisibility && 
+                                       shoulderR.visibility > minVisibility;
 
                 // Update wrist position history buffers
                 if (leftWristVisible) {
@@ -893,72 +896,99 @@
                 const rightWristStable = rightArmValid && rightVar < WRIST_STABILITY_VARIANCE;
                 const wristStable = leftWristStable || rightWristStable;
 
-                // Proximity and height check to avoid false positives (e.g., typing, resting hands on desk)
+                // Identify what object is being held based on COCO-SSD detections and active wrists
+                updateHoldingObject(state.lastDetections, wristL, wristR, canvas.width, canvas.height);
+
+                // Calcular referências de escala (altura e quadril)
                 const avgHipY = (leftHipVisible && rightHipVisible) ? (hipL.y + hipR.y) / 2 : (leftHipVisible ? hipL.y : (rightHipVisible ? hipR.y : 0.85));
                 const midTorsoY = avgShoulderY + (avgHipY - avgShoulderY) * 0.55;
 
-                const leftWristNearFace = leftWristVisible && noseValid && (Math.sqrt(Math.pow(wristL.x - nose.x, 2) + Math.pow(wristL.y - nose.y, 2)) < 0.28);
-                const rightWristNearFace = rightWristVisible && noseValid && (Math.sqrt(Math.pow(wristR.x - nose.x, 2) + Math.pow(wristR.y - nose.y, 2)) < 0.28);
-
-                const leftHandUsingPhone = leftWristVisible && (wristL.y < midTorsoY) && leftWristNearFace;
-                const rightHandUsingPhone = rightWristVisible && (wristR.y < midTorsoY) && rightWristNearFace;
-                const handInPhonePosition = leftHandUsingPhone || rightHandUsingPhone;
-
-                // Count active postural metrics (only counted if a hand is actually in phone-use position)
-                let metricsActive = 0;
-                if (handInPhonePosition) {
-                    if (wristAboveHip) metricsActive++;
-                    if (elbowFlexion) metricsActive++;
-                    if (headTiltDown) metricsActive++;
-                    if (wristStable) metricsActive++;
+                // Limiar escala-invariante: varia com a distância da pessoa à câmera
+                // (shoulderDist pequeno = pessoa longe = threshold menor em coordenadas normalizadas)
+                let maxHandNoseDist = 0.28;
+                if (shouldersValid) {
+                    const shoulderDist = Math.sqrt(Math.pow(shoulderL.x - shoulderR.x, 2) + Math.pow(shoulderL.y - shoulderR.y, 2));
+                    // Threshold: 1.8x a distância dos ombros (funciona perto E longe)
+                    maxHandNoseDist = Math.max(0.08, Math.min(0.45, shoulderDist * 1.8));
                 }
 
+                const leftWristNearFace = leftWristVisible && noseValid && (Math.sqrt(Math.pow(wristL.x - nose.x, 2) + Math.pow(wristL.y - nose.y, 2)) < maxHandNoseDist);
+                const rightWristNearFace = rightWristVisible && noseValid && (Math.sqrt(Math.pow(wristR.x - nose.x, 2) + Math.pow(wristR.y - nose.y, 2)) < maxHandNoseDist);
+                const handNearFace = leftWristNearFace || rightWristNearFace;
+
+                // Verificar se mão está na metade superior do torso (independente de face)
+                const leftHandHigh = leftWristVisible && (wristL.y < midTorsoY);
+                const rightHandHigh = rightWristVisible && (wristR.y < midTorsoY);
+                const handAboveMidTorso = leftHandHigh || rightHandHigh;
+
+                // Acumular score de métricas posturais:
+                // - Sem hand near face: métricas valem menos (pessoa longe ou ângulo oblíquo)
+                // - Com hand near face: bonus 2x (confirma postura típica de celular)
+                let metricsActive = 0;
+                let postureScore = 0;
+
+                if (handAboveMidTorso) {
+                    // Métricas posturais básicas — valem mesmo sem confirmação de proximidade facial
+                    if (wristAboveHip) { metricsActive++; postureScore += handNearFace ? 2.0 : 0.8; }
+                    if (elbowFlexion)  { metricsActive++; postureScore += handNearFace ? 2.0 : 0.8; }
+                    if (headTiltDown)  { metricsActive++; postureScore += handNearFace ? 2.0 : 1.0; }
+                    if (wristStable)   { metricsActive++; postureScore += handNearFace ? 2.0 : 0.8; }
+                }
+
+                const isHoldingPhone = state.holdingObject === 'Celular';
+                const isPhoneDetected = lastPhoneDetections && lastPhoneDetections.length > 0;
                 const now = Date.now();
                 const cooldownActive = state.lastPhoneAlertTime && (now - state.lastPhoneAlertTime < ALERT_COOLDOWN_MS);
 
                 if (cooldownActive) {
                     state.phoneSuspicionScore = 0;
                 } else {
-                    // Update score accumulator
-                    if (metricsActive >= 2) {
-                        state.phoneSuspicionScore += 1.5;
-                    } else if (metricsActive === 1) {
-                        state.phoneSuspicionScore += 0.5;
-                    } else if (metricsActive === 0) {
-                        state.phoneSuspicionScore = Math.max(0, state.phoneSuspicionScore - 1);
+                    // Acumulação temporal: adiciona postureScore por frame, decai se sem métricas
+                    if (postureScore > 0) {
+                        state.phoneSuspicionScore += postureScore;
+                    } else {
+                        // Decaimento: -1.5 por frame se nenhuma métrica ativa
+                        state.phoneSuspicionScore = Math.max(0, state.phoneSuspicionScore - 1.5);
                     }
 
-                    // COCO-SSD detection bonus (+5 immediately)
-                    if (lastPhoneDetections && lastPhoneDetections.length > 0) {
+                    // COCO-SSD detecção de celular: bônus imediato grande
+                    if (isPhoneDetected) {
                         state.phoneSuspicionScore += 5;
                     }
 
-                    // Cap score at 30 maximum
+                    // Holding object = celular confirmado pelo COCO-SSD + proximidade de pulso
+                    if (isHoldingPhone) {
+                        state.phoneSuspicionScore += 10;
+                    }
+
+                    // Cap máximo
                     state.phoneSuspicionScore = Math.min(30, state.phoneSuspicionScore);
                 }
 
-                // Trigger alert if score matches or exceeds threshold
+                // Disparar alerta se score atingiu o limiar
                 if (!cooldownActive && state.phoneSuspicionScore >= SCORE_ALERT_THRESHOLD) {
                     const activeModules = [];
                     if (wristAboveHip) activeModules.push('WRIST_ABOVE_HIP');
-                    if (elbowFlexion) activeModules.push('ELBOW_FLEXION');
-                    if (headTiltDown) activeModules.push('HEAD_TILT');
-                    if (wristStable) activeModules.push('WRIST_STABILITY');
-                    if (lastPhoneDetections && lastPhoneDetections.length > 0) activeModules.push('COCO_SSD');
+                    if (elbowFlexion)  activeModules.push('ELBOW_FLEXION');
+                    if (headTiltDown)  activeModules.push('HEAD_TILT');
+                    if (wristStable)   activeModules.push('WRIST_STABILITY');
+                    if (handNearFace)  activeModules.push('HAND_NEAR_FACE');
+                    if (isPhoneDetected) activeModules.push('COCO_SSD');
+                    if (isHoldingPhone)  activeModules.push('HOLDING_OBJECT');
 
                     triggerAlert('USO DE CELULAR', activeModules);
                     state.phoneSuspicionScore = 0;
                     state.lastPhoneAlertTime = Date.now();
                 }
 
-                // Resolve alert if no metrics are active
-                if (metricsActive === 0) {
+                // Resolver alerta: requer ausência total de evidências
+                if (metricsActive === 0 && !isHoldingPhone && !isPhoneDetected) {
                     resolveAlert('USO DE CELULAR');
                 }
 
-                // Update state variables for visual output (HUD and skeleton overlay styling)
-                state.phoneInHand = (state.phoneSuspicionScore >= SCORE_ALERT_THRESHOLD) || (metricsActive >= 2) || (lastPhoneDetections.length > 0 && metricsActive >= 1);
-                state.phoneDetected = (state.phoneSuspicionScore >= 5) || (metricsActive >= 1) || (lastPhoneDetections.length > 0);
+                // Atualizar variáveis de estado para HUD e overlay visual
+                state.phoneInHand = (state.phoneSuspicionScore >= SCORE_ALERT_THRESHOLD) || (metricsActive >= 2) || (isPhoneDetected && metricsActive >= 1) || isHoldingPhone;
+                state.phoneDetected = (state.phoneSuspicionScore >= 5) || (metricsActive >= 1) || isPhoneDetected || isHoldingPhone;
             }
 
             // FALL DETECTION (Multi-Detector V4)
@@ -988,6 +1018,57 @@
                 state.fallStartTime = null;
                 resolveAlert('POSSÍVEL QUEDA');
                 resolveAlert('QUEDA CONFIRMADA');
+            }
+        }
+
+        function updateHoldingObject(detections, wristL, wristR, canvasWidth, canvasHeight) {
+            state.holdingObject = null;
+            state.holdingObjectConfidence = 0;
+            
+            if (!detections || detections.length === 0) return;
+            
+            const checkWristProximity = (wrist, bbox) => {
+                if (!wrist) return false;
+                const wx = wrist.x * canvasWidth;
+                const wy = wrist.y * canvasHeight;
+                const [bx, by, bw, bh] = bbox;
+                const margin = 50;
+                return (wx >= bx - margin && wx <= bx + bw + margin &&
+                        wy >= by - margin && wy <= by + bh + margin);
+            };
+            
+            const handheldClasses = ['cell phone', 'cup', 'bottle', 'book', 'remote', 'mouse', 'scissors', 'handbag', 'banana', 'apple', 'orange'];
+            
+            const closeDetections = detections.filter(d => {
+                if (!handheldClasses.includes(d.class)) return false;
+                const nearLeft = wristL && wristL.visibility > 0.35 && checkWristProximity(wristL, d.bbox);
+                const nearRight = wristR && wristR.visibility > 0.35 && checkWristProximity(wristR, d.bbox);
+                return nearLeft || nearRight;
+            });
+            
+            if (closeDetections.length > 0) {
+                closeDetections.sort((a, b) => b.score - a.score);
+                const best = closeDetections[0];
+                
+                const translateClass = (cls) => {
+                    const dict = {
+                        'cell phone': 'Celular',
+                        'cup': 'Copo',
+                        'bottle': 'Garrafa',
+                        'book': 'Livro',
+                        'remote': 'Controle Remoto',
+                        'mouse': 'Mouse',
+                        'scissors': 'Tesoura',
+                        'handbag': 'Bolsa',
+                        'banana': 'Banana',
+                        'apple': 'Maçã',
+                        'orange': 'Laranja'
+                    };
+                    return dict[cls] || cls.toUpperCase();
+                };
+                
+                state.holdingObject = translateClass(best.class);
+                state.holdingObjectConfidence = Math.round(best.score * 100);
             }
         }
 
@@ -1290,6 +1371,49 @@
                     ctx.stroke();
                 }
             }
+
+            // Draw holding object badge if active
+            if (state.holdingObject && state.lastPoseLandmarks) {
+                const l = state.lastPoseLandmarks;
+                const wristL = l[15];
+                const wristR = l[16];
+                
+                // Choose the hand that is active/visible (relaxed threshold 0.20)
+                let activeWrist = null;
+                if (wristL && wristL.visibility > 0.20 && wristR && wristR.visibility > 0.20) {
+                    // Choose the higher wrist (smaller y coordinate)
+                    activeWrist = wristL.y < wristR.y ? wristL : wristR;
+                } else if (wristL && wristL.visibility > 0.20) {
+                    activeWrist = wristL;
+                } else if (wristR && wristR.visibility > 0.20) {
+                    activeWrist = wristR;
+                }
+                
+                if (activeWrist) {
+                    const wx = activeWrist.x * canvas.width;
+                    const wy = activeWrist.y * canvas.height;
+                    
+                    ctx.fillStyle = 'rgba(255, 110, 0, 0.85)';
+                    const text = `Segurando: ${state.holdingObject} (${state.holdingObjectConfidence}%)`;
+                    ctx.font = 'bold 12px Outfit';
+                    const textWidth = ctx.measureText(text).width;
+                    const rectW = textWidth + 16;
+                    const rectH = 22;
+                    const rectX = wx - rectW / 2;
+                    const rectY = wy - 30;
+                    
+                    ctx.beginPath();
+                    if (ctx.roundRect) {
+                        ctx.roundRect(rectX, rectY, rectW, rectH, 6);
+                        ctx.fill();
+                    } else {
+                        ctx.fillRect(rectX, rectY, rectW, rectH);
+                    }
+                    
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillText(text, rectX + 8, rectY + 15);
+                }
+            }
         }
 
         function updateHUDState() {
@@ -1322,8 +1446,34 @@
             else fallEl.innerHTML = `NORMAL ●`;
 
             const objectsEl = document.getElementById('hud-objects');
-            const uniqueObjs = [...new Set(state.lastDetections.map(d => d.class))];
-            objectsEl.innerText = uniqueObjs.length > 0 ? uniqueObjs.join(', ').toUpperCase() : 'NENHUM';
+            let objsText = 'NENHUM';
+            const uniqueObjs = [...new Set(state.lastDetections.map(d => {
+                const cls = d.class.toLowerCase();
+                const translate = {
+                    'cell phone': 'CELULAR',
+                    'cup': 'COPO',
+                    'bottle': 'GARRAFA',
+                    'book': 'LIVRO',
+                    'remote': 'CONTROLE REMOTO',
+                    'mouse': 'MOUSE',
+                    'scissors': 'TESOURA',
+                    'handbag': 'BOLSA',
+                    'banana': 'BANANA',
+                    'apple': 'MAÇÃ',
+                    'orange': 'LARANJA'
+                };
+                const name = translate[cls] || cls.toUpperCase();
+                if (state.holdingObject && state.holdingObject.toUpperCase() === name) {
+                    return `${name} (SEGURANDO)`;
+                }
+                return name;
+            }))];
+            if (uniqueObjs.length > 0) {
+                objsText = uniqueObjs.join(', ');
+            } else if (state.holdingObject) {
+                objsText = `${state.holdingObject.toUpperCase()} (SEGURANDO)`;
+            }
+            objectsEl.innerText = objsText;
         }
 
         function formatMs(ms) {
