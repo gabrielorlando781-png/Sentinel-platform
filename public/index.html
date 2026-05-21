@@ -796,6 +796,7 @@
                 if (!state.rightWristHistory) state.rightWristHistory = [];
                 if (state.phoneSuspicionScore === undefined) state.phoneSuspicionScore = 0;
                 if (state.lastPhoneAlertTime === undefined) state.lastPhoneAlertTime = 0;
+                if (state.lastPhoneSeenTime === undefined) state.lastPhoneSeenTime = 0;
 
                 const wristL = landmarks[15];
                 const wristR = landmarks[16];
@@ -921,18 +922,45 @@
                 const rightHandHigh = rightWristVisible && (wristR.y < midTorsoY);
                 const handAboveMidTorso = leftHandHigh || rightHandHigh;
 
-                // Acumular score de métricas posturais:
-                // - Sem hand near face: métricas valem menos (pessoa longe ou ângulo oblíquo)
-                // - Com hand near face: bonus 2x (confirma postura típica de celular)
+                // === EXCLUSÕES DEFINITIVAS — posturas que NÃO são uso de celular ===
+                // 1. Ambos os punhos acima dos ombros ao mesmo tempo → alongamento / exercício
+                const bothWristsAboveShoulder =
+                    shouldersValid &&
+                    leftWristVisible  && (wristL.y < shoulderL.y - 0.02) &&
+                    rightWristVisible && (wristR.y < shoulderR.y - 0.02);
+
+                // 2. Qualquer punho acima do nariz → braço esticado para cima
+                const wristAboveHead =
+                    (leftWristVisible  && noseValid && wristL.y < nose.y - 0.04) ||
+                    (rightWristVisible && noseValid && wristR.y < nose.y - 0.04);
+
+                const exclusionActive = bothWristsAboveShoulder || wristAboveHead;
+
+                // Memória COCO-SSD: se viu celular nos últimos 15s, aceita critério mais relaxado
+                const recentPhoneEvidence = (Date.now() - state.lastPhoneSeenTime) < 15000;
+
+                // Acumulação de score:
+                // - Sem evidência recente de COCO-SSD: exige 3+ métricas (evita falso positivo)
+                // - Com evidência recente de COCO-SSD: basta 2 métricas
+                // - handNearFace confirma: score 2x
                 let metricsActive = 0;
                 let postureScore = 0;
 
-                if (handAboveMidTorso) {
-                    // Métricas posturais básicas — valem mesmo sem confirmação de proximidade facial
-                    if (wristAboveHip) { metricsActive++; postureScore += handNearFace ? 2.0 : 0.8; }
-                    if (elbowFlexion)  { metricsActive++; postureScore += handNearFace ? 2.0 : 0.8; }
-                    if (headTiltDown)  { metricsActive++; postureScore += handNearFace ? 2.0 : 1.0; }
-                    if (wristStable)   { metricsActive++; postureScore += handNearFace ? 2.0 : 0.8; }
+                if (handAboveMidTorso && !exclusionActive) {
+                    if (wristAboveHip) metricsActive++;
+                    if (elbowFlexion)  metricsActive++;
+                    if (headTiltDown)  metricsActive++;
+                    if (wristStable)   metricsActive++;
+
+                    // Gate: mínimo de métricas obrigatórias antes de pontuar
+                    const minRequired = recentPhoneEvidence ? 2 : 3;
+
+                    if (metricsActive >= minRequired) {
+                        if (wristAboveHip) postureScore += handNearFace ? 2.0 : 0.8;
+                        if (elbowFlexion)  postureScore += handNearFace ? 2.0 : 0.8;
+                        if (headTiltDown)  postureScore += handNearFace ? 2.0 : 1.0;
+                        if (wristStable)   postureScore += handNearFace ? 2.0 : 0.8;
+                    }
                 }
 
                 const isHoldingPhone = state.holdingObject === 'Celular';
@@ -951,9 +979,10 @@
                         state.phoneSuspicionScore = Math.max(0, state.phoneSuspicionScore - 1.5);
                     }
 
-                    // COCO-SSD detecção de celular: bônus imediato grande
+                    // COCO-SSD detecção de celular: bônus imediato + atualiza memória
                     if (isPhoneDetected) {
                         state.phoneSuspicionScore += 5;
+                        state.lastPhoneSeenTime = Date.now(); // memória de 15s
                     }
 
                     // Holding object = celular confirmado pelo COCO-SSD + proximidade de pulso
