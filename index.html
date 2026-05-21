@@ -881,12 +881,25 @@
                 const rightWristStable = rightArmValid && rightVar < WRIST_STABILITY_VARIANCE;
                 const wristStable = leftWristStable || rightWristStable;
 
-                // Count active postural metrics
+                // Proximity and height check to avoid false positives (e.g., typing, resting hands on desk)
+                const avgHipY = (leftHipVisible && rightHipVisible) ? (hipL.y + hipR.y) / 2 : (leftHipVisible ? hipL.y : (rightHipVisible ? hipR.y : 0.85));
+                const midTorsoY = avgShoulderY + (avgHipY - avgShoulderY) * 0.55;
+
+                const leftWristNearFace = leftWristVisible && noseValid && (Math.sqrt(Math.pow(wristL.x - nose.x, 2) + Math.pow(wristL.y - nose.y, 2)) < 0.28);
+                const rightWristNearFace = rightWristVisible && noseValid && (Math.sqrt(Math.pow(wristR.x - nose.x, 2) + Math.pow(wristR.y - nose.y, 2)) < 0.28);
+
+                const leftHandUsingPhone = leftWristVisible && (wristL.y < midTorsoY) && leftWristNearFace;
+                const rightHandUsingPhone = rightWristVisible && (wristR.y < midTorsoY) && rightWristNearFace;
+                const handInPhonePosition = leftHandUsingPhone || rightHandUsingPhone;
+
+                // Count active postural metrics (only counted if a hand is actually in phone-use position)
                 let metricsActive = 0;
-                if (wristAboveHip) metricsActive++;
-                if (elbowFlexion) metricsActive++;
-                if (headTiltDown) metricsActive++;
-                if (wristStable) metricsActive++;
+                if (handInPhonePosition) {
+                    if (wristAboveHip) metricsActive++;
+                    if (elbowFlexion) metricsActive++;
+                    if (headTiltDown) metricsActive++;
+                    if (wristStable) metricsActive++;
+                }
 
                 const now = Date.now();
                 const cooldownActive = state.lastPhoneAlertTime && (now - state.lastPhoneAlertTime < ALERT_COOLDOWN_MS);
