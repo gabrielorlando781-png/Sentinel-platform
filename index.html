@@ -795,22 +795,22 @@
                 const elbowR = landmarks[14];
                 const nose = landmarks[0];
 
-                const leftWristVisible = wristL && wristL.visibility > 0.5;
-                const rightWristVisible = wristR && wristR.visibility > 0.5;
-                const leftHipVisible = hipL && hipL.visibility > 0.5;
-                const rightHipVisible = hipR && hipR.visibility > 0.5;
+                const leftWristVisible = wristL && wristL.visibility > 0.35;
+                const rightWristVisible = wristR && wristR.visibility > 0.35;
+                const leftHipVisible = hipL && hipL.visibility > 0.35;
+                const rightHipVisible = hipR && hipR.visibility > 0.35;
                 const leftArmValid = shoulderL && elbowL && wristL && 
-                                     shoulderL.visibility > 0.5 && 
-                                     elbowL.visibility > 0.5 && 
+                                     shoulderL.visibility > 0.35 && 
+                                     elbowL.visibility > 0.35 && 
                                      leftWristVisible;
                 const rightArmValid = shoulderR && elbowR && wristR && 
-                                      shoulderR.visibility > 0.5 && 
-                                      elbowR.visibility > 0.5 && 
+                                      shoulderR.visibility > 0.35 && 
+                                      elbowR.visibility > 0.35 && 
                                       rightWristVisible;
-                const noseValid = nose && nose.visibility > 0.5;
+                const noseValid = nose && nose.visibility > 0.35;
                 const shouldersValid = shoulderL && shoulderR && 
-                                       shoulderL.visibility > 0.5 && 
-                                       shoulderR.visibility > 0.5;
+                                       shoulderL.visibility > 0.35 && 
+                                       shoulderR.visibility > 0.35;
 
                 // Update wrist position history buffers
                 if (leftWristVisible) {
@@ -881,12 +881,22 @@
                 const rightWristStable = rightArmValid && rightVar < WRIST_STABILITY_VARIANCE;
                 const wristStable = leftWristStable || rightWristStable;
 
+                // Identify what object is being held based on COCO-SSD detections and active wrists
+                updateHoldingObject(state.lastDetections, wristL, wristR, canvas.width, canvas.height);
+
                 // Proximity and height check to avoid false positives (e.g., typing, resting hands on desk)
                 const avgHipY = (leftHipVisible && rightHipVisible) ? (hipL.y + hipR.y) / 2 : (leftHipVisible ? hipL.y : (rightHipVisible ? hipR.y : 0.85));
                 const midTorsoY = avgShoulderY + (avgHipY - avgShoulderY) * 0.55;
 
-                const leftWristNearFace = leftWristVisible && noseValid && (Math.sqrt(Math.pow(wristL.x - nose.x, 2) + Math.pow(wristL.y - nose.y, 2)) < 0.28);
-                const rightWristNearFace = rightWristVisible && noseValid && (Math.sqrt(Math.pow(wristR.x - nose.x, 2) + Math.pow(wristR.y - nose.y, 2)) < 0.28);
+                // Scale-invariant hand-to-nose proximity threshold based on shoulder distance (represents person scale in frame)
+                let maxHandNoseDist = 0.28;
+                if (shouldersValid) {
+                    const shoulderDist = Math.sqrt(Math.pow(shoulderL.x - shoulderR.x, 2) + Math.pow(shoulderL.y - shoulderR.y, 2));
+                    maxHandNoseDist = Math.max(0.10, Math.min(0.38, shoulderDist * 1.6));
+                }
+
+                const leftWristNearFace = leftWristVisible && noseValid && (Math.sqrt(Math.pow(wristL.x - nose.x, 2) + Math.pow(wristL.y - nose.y, 2)) < maxHandNoseDist);
+                const rightWristNearFace = rightWristVisible && noseValid && (Math.sqrt(Math.pow(wristR.x - nose.x, 2) + Math.pow(wristR.y - nose.y, 2)) < maxHandNoseDist);
 
                 const leftHandUsingPhone = leftWristVisible && (wristL.y < midTorsoY) && leftWristNearFace;
                 const rightHandUsingPhone = rightWristVisible && (wristR.y < midTorsoY) && rightWristNearFace;

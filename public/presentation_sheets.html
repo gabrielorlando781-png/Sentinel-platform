@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentinel - Folhas de Apresentação (A4)</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&family=Outfit:wght@300;400;600;800&display=swap');
+
+        :root {
+            --primary: #2563eb;
+            --primary-light: #eff6ff;
+            --accent: #0f172a;
+            --text-main: #334155;
+            --text-dark: #0f172a;
+            --danger: #ef4444;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --border: #e2e8f0;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #f1f5f9;
+            font-family: 'Inter', sans-serif;
+            color: var(--text-main);
+            padding: 40px 0;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+
+        /* Simulação das folhas A4 em tela */
+        .page {
+            width: 210mm;
+            height: 297mm;
+            background: white;
+            margin: 0 auto 40px auto;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+            padding: 20mm;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Configuração de Impressão */
+        @media print {
+            body {
+                background-color: white;
+                padding: 0;
+            }
+            .page {
+                margin: 0;
+                box-shadow: none;
+                page-break-after: always;
+                width: 210mm;
+                height: 297mm;
+            }
+        }
+
+        /* Elementos Decorativos de Fundo */
+        .page::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 8px;
+            background: linear-gradient(90deg, var(--primary), #3b82f6, #06b6d4);
+        }
+
+        /* Rodapé Padrão */
+        .footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid var(--border);
+            padding-top: 15px;
+            font-size: 11px;
+            color: #94a3b8;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .footer-logo {
+            font-family: 'Outfit', sans-serif;
+            font-weight: 800;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .footer-logo span {
+            color: var(--primary);
+        }
+
+        /* Estilos de Conteúdo */
+        h1, h2, h3 {
+            font-family: 'Outfit', sans-serif;
+            color: var(--text-dark);
+        }
+
+        .title-huge {
+            font-size: 54px;
+            font-weight: 800;
+            line-height: 1.1;
+            letter-spacing: -1.5px;
+            margin-bottom: 15px;
+        }
+
+        .title-huge span {
+            background: linear-gradient(135deg, var(--primary), #06b6d4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            font-size: 20px;
+            font-weight: 300;
+            color: #64748b;
+            line-height: 1.5;
+            margin-bottom: 40px;
+        }
+
+        .section-title {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: var(--text-dark);
+            border-bottom: 2px solid var(--primary-light);
+            padding-bottom: 8px;
+        }
+
+        .section-title svg {
+            color: var(--primary);
+        }
+
+        /* Cards e Listas */
+        .card {
+            background: var(--primary-light);
+            border-left: 5px solid var(--primary);
+            padding: 24px;
+            border-radius: 0 12px 12px 0;
+            margin-bottom: 25px;
+        }
+
+        .card.danger {
+            background: #fef2f2;
+            border-left-color: var(--danger);
+        }
+
+        .card.success {
+            background: #ecfdf5;
+            border-left-color: var(--success);
+        }
+
+        .card h4 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-dark);
+        }
+
+        .card p {
+            font-size: 15px;
+            line-height: 1.6;
+            color: var(--text-main);
+        }
+
+        ul.styled-list {
+            list-style: none;
+        }
+
+        ul.styled-list li {
+            position: relative;
+            padding-left: 32px;
+            margin-bottom: 18px;
+            font-size: 16px;
+            line-height: 1.6;
+        }
+
+        ul.styled-list li::before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            top: 2px;
+            width: 20px;
+            height: 20px;
+            background: var(--primary-light);
+            color: var(--primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        .danger-list li::before {
+            content: "!" !important;
+            background: #fee2e2 !important;
+            color: var(--danger) !important;
+        }
+
+        /* Grid */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+
+        /* SVG Posture Dummy */
+        .posture-diagram {
+            width: 100%;
+            height: 250px;
+            background: #0f172a;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 20px 0;
+        }
+
+        /* Badge */
+        .badge {
+            background: var(--primary);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: inline-block;
+            margin-bottom: 15px;
+        }
+
+        .badge.danger { background: var(--danger); }
+        .badge.success { background: var(--success); }
+    </style>
+</head>
+<body>
+
+    <!-- PÁGINA 1: CAPA/APRESENTAÇÃO PRINCIPAL -->
+    <div class="page" style="justify-content: center; align-items: center; text-align: center; padding: 40mm 20mm;">
+        <div>
+            <!-- Big Shield / Eye Vector Logo -->
+            <svg style="width: 120px; height: 120px; color: var(--primary); margin-bottom: 30px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                <circle cx="12" cy="11" r="3"/>
+                <path d="M8 11h.01M16 11h.01"/>
+            </svg>
+            
+            <h1 class="title-huge" style="font-size: 64px;"><span>SENTINEL</span></h1>
+            <p class="subtitle" style="font-size: 24px; max-width: 550px; margin-left: auto; margin-right: auto; font-weight: 400;">
+                Inteligência Artificial & Visão Computacional Acessível para Segurança e Monitoramento
+            </p>
+            
+            <div style="width: 80px; height: 4px; background: var(--primary); margin: 30px auto;"></div>
+            
+            <p style="font-size: 16px; color: #64748b; line-height: 1.6; max-width: 500px; margin: 0 auto 40px auto;">
+                Transformando qualquer webcam comum em um assistente de monitoramento em tempo real. Uma solução leve, econômica e focada na privacidade humana.
+            </p>
+        </div>
+        
+        <div class="footer" style="width: 100%; position: absolute; bottom: 20mm; left: 0; padding: 0 20mm;">
+            <div>FEIRA DE CIÊNCIAS 2026</div>
+            <div class="footer-logo">SENTI<span>NEL</span></div>
+        </div>
+    </div>
+
+    <!-- PÁGINA 2: O PROBLEMA -->
+    <div class="page">
+        <div>
+            <span class="badge danger">A Dor do Mercado</span>
+            <h2 class="section-title">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                O Perigo Oculto e os Altos Custos
+            </h2>
+
+            <div class="card danger" style="margin-top: 30px;">
+                <h4>Acidentes de Trabalho e Negligência</h4>
+                <p>Quedas repentinas e distrações causadas pelo uso de celular em áreas de risco são as principais causas de acidentes severos em indústrias e comércios.</p>
+            </div>
+
+            <div class="grid-2" style="margin-top: 30px;">
+                <div>
+                    <h3 style="font-size: 20px; margin-bottom: 15px; color: var(--text-dark);">Pequenas Empresas</h3>
+                    <ul class="styled-list danger-list">
+                        <li>Um único processo trabalhista por acidente pode falir uma micro ou pequena empresa.</li>
+                        <li>Falta de braço ou orçamento para contratar equipe de monitoramento humano dedicada.</li>
+                        <li>Uso indevido de smartphones reduz a atenção em processos críticos de atendimento ou operação.</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 style="font-size: 20px; margin-bottom: 15px; color: var(--text-dark);">Idosos e Residências</h3>
+                    <ul class="styled-list danger-list">
+                        <li>Uma queda em casa sem socorro imediato pode deixar sequelas irreversíveis.</li>
+                        <li>Sistemas de vigilância invasivos que transmitem imagens ferem a privacidade de quem vive na casa.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div>MÓDULO 02: O PROBLEMA</div>
+            <div class="footer-logo">SENTI<span>NEL</span></div>
+        </div>
+    </div>
+
+    <!-- PÁGINA 3: A SOLUÇÃO (ACESSIBILIDADE) -->
+    <div class="page">
+        <div>
+            <span class="badge success">A Proposta</span>
+            <h2 class="section-title">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                A Acessibilidade Como Filosofia
+            </h2>
+
+            <p style="font-size: 16px; line-height: 1.6; margin-bottom: 30px;">
+                Os sistemas de segurança inteligentes tradicionais exigem câmeras caras e servidores caríssimos. O <strong>Sentinel</strong> quebra essa barreira ao processar tudo localmente e com baixo uso de recursos.
+            </p>
+
+            <div class="grid-2">
+                <div class="card success">
+                    <h4>Roda no Navegador</h4>
+                    <p>Sem instalação de programas pesados. Funciona diretamente em qualquer aba do Chrome ou Edge.</p>
+                </div>
+                <div class="card success">
+                    <h4>Hardware Acessível</h4>
+                    <p>Otimizado para rodar em computadores comuns de baixo custo (processadores i3) e webcams baratas.</p>
+                </div>
+            </div>
+
+            <div style="margin-top: 30px;">
+                <h3 style="font-size: 20px; margin-bottom: 15px; color: var(--text-dark);">Privacidade por Design (Privacy-First)</h3>
+                <p style="font-size: 15px; line-height: 1.6;">
+                    O Sentinel não envia imagem ou vídeo para servidores na nuvem. Os modelos matemáticos calculam as posições corporais localmente no próprio computador do usuário e descartam o frame de vídeo no milissegundo seguinte. Somente dados puramente textuais de alerta são emitidos.
+                </p>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div>MÓDULO 03: ACESSIBILIDADE</div>
+            <div class="footer-logo">SENTI<span>NEL</span></div>
+        </div>
+    </div>
+
+    <!-- PÁGINA 4: A TECNOLOGIA -->
+    <div class="page">
+        <div>
+            <span class="badge">Por Dentro do Código</span>
+            <h2 class="section-title">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                Como a Inteligência Artificial Enxerga
+            </h2>
+
+            <p style="font-size: 15px; line-height: 1.6; margin-bottom: 20px;">
+                O Sentinel utiliza dois modelos neurais rodando simultaneamente em tempo real no navegador para detectar riscos e quedas:
+            </p>
+
+            <div class="posture-diagram">
+                <!-- SVG Mapeamento MediaPipe -->
+                <svg width="350" height="220" viewBox="0 0 200 120" style="color: #10b981;">
+                    <!-- Grid Lines -->
+                    <defs>
+                        <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
+                            <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+                        </pattern>
+                    </defs>
+                    <rect width="100%" height="100%" fill="url(#grid)" />
+                    <!-- Posture Skeleton -->
+                    <circle cx="100" cy="25" r="5" fill="#10b981" /> <!-- Head -->
+                    <line x1="100" y1="30" x2="100" y2="70" stroke="#10b981" stroke-width="2" /> <!-- Spine -->
+                    <line x1="75" y1="40" x2="125" y2="40" stroke="#10b981" stroke-width="2" /> <!-- Shoulders -->
+                    <line x1="85" y1="70" x2="115" y2="70" stroke="#10b981" stroke-width="2" /> <!-- Hips -->
+                    <!-- Arms -->
+                    <line x1="75" y1="40" x2="65" y2="55" stroke="#10b981" stroke-width="1.5" />
+                    <line x1="65" y1="55" x2="70" y2="75" stroke="#3b82f6" stroke-width="2" /> <!-- Arm flexed -->
+                    <circle cx="70" cy="75" r="3" fill="#3b82f6" /> <!-- Hand holding phone -->
+                    <!-- Legs -->
+                    <line x1="85" y1="70" x2="80" y2="95" stroke="#10b981" stroke-width="1.5" />
+                    <line x1="115" y1="70" x2="120" y2="95" stroke="#10b981" stroke-width="1.5" />
+                    
+                    <rect x="73" y="74" width="8" height="14" rx="1" fill="#ef4444" opacity="0.8" /> <!-- Phone Object -->
+                    
+                    <!-- Labels -->
+                    <text x="110" y="20" fill="#94a3b8" font-size="6" font-family="sans-serif">MediaPipe Pose (33 Landmarks)</text>
+                    <text x="10" y="85" fill="#3b82f6" font-size="6" font-family="sans-serif">Ângulo Cotovelo: 45° - 130°</text>
+                    <text x="10" y="95" fill="#ef4444" font-size="6" font-family="sans-serif">IA Object (COCO-SSD): Celular</text>
+                </svg>
+            </div>
+
+            <div class="grid-2" style="margin-top: 15px;">
+                <div>
+                    <h4 style="font-size: 16px; font-weight: 700; color: var(--text-dark); margin-bottom: 8px;">1. MediaPipe Pose</h4>
+                    <p style="font-size: 14px; line-height: 1.5;">Analisa a estrutura óssea do trabalhador a 30 quadros por segundo, computando os ângulos das costas, braços e pernas de forma matemática.</p>
+                </div>
+                <div>
+                    <h4 style="font-size: 16px; font-weight: 700; color: var(--text-dark); margin-bottom: 8px;">2. COCO-SSD</h4>
+                    <p style="font-size: 14px; line-height: 1.5;">Uma rede neural especializada em encontrar objetos nas mãos do indivíduo (como celulares ou garrafas) para cruzar com a postura corporal.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div>MÓDULO 04: A TECNOLOGIA</div>
+            <div class="footer-logo">SENTI<span>NEL</span></div>
+        </div>
+    </div>
+
+    <!-- PÁGINA 5: MULTI-DETECÇÃO INTELIGENTE -->
+    <div class="page">
+        <div>
+            <span class="badge">O Que o Sistema Faz</span>
+            <h2 class="section-title">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                Três Vertentes de Monitoramento
+            </h2>
+
+            <div class="card" style="border-left-color: var(--danger); background: #fffafb;">
+                <h4 style="color: var(--danger); display: flex; align-items: center; gap: 8px;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                    Quedas Críticas (Multi-Detector V4)
+                </h4>
+                <p>O algoritmo monitora a inclinação da coluna e proximidade dos ombros com o chão. Possui proteção de <strong>Sitting Guard</strong> (ignora se a pessoa apenas sentou no chão de forma controlada ou dobrou o joelho para pegar algo).</p>
+            </div>
+
+            <div class="card" style="border-left-color: var(--warning); background: #fffdf5;">
+                <h4 style="color: var(--warning); display: flex; align-items: center; gap: 8px;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                    Uso Indevido de Celular
+                </h4>
+                <p>Com pontuação acumulativa e <strong>timer contínuo de 20 segundos</strong>, evita falsos alertas se o trabalhador apenas erguer o braço ou se espreguiçar. Dispara apenas no uso contínuo e suspeito.</p>
+            </div>
+
+            <div class="card" style="border-left-color: var(--primary); background: #f7fafc;">
+                <h4 style="color: var(--primary); display: flex; align-items: center; gap: 8px;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    Inatividade e Ausência
+                </h4>
+                <p>Garante que postos críticos como guaritas e recepções estejam sempre ocupados e ativos, monitorando micro-movimentos constantes do trabalhador.</p>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div>MÓDULO 05: FUNÇÕES</div>
+            <div class="footer-logo">SENTI<span>NEL</span></div>
+        </div>
+    </div>
+
+    <!-- PÁGINA 6: AÇÃO E ALERTA -->
+    <div class="page">
+        <div>
+            <span class="badge success">Segurança Imediata</span>
+            <h2 class="section-title">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                O Alerta Onde Você Estiver
+            </h2>
+
+            <p style="font-size: 16px; line-height: 1.6; margin-bottom: 30px;">
+                De nada serve detectar uma ocorrência se os responsáveis não souberem dela imediatamente. O Sentinel integra-se instantaneamente com ferramentas que as pessoas já usam no dia a dia.
+            </p>
+
+            <div class="card" style="background: #f0fdf4; border-left-color: #22c55e;">
+                <h4 style="color: #16a34a; display: flex; align-items: center; gap: 8px;">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.13 2.82a5.02 5.02 0 0 0-7.07 0L12 4.07 10.94 3a5.02 5.02 0 0 0-7.07 7.07l1.06 1.06L12 21.23l7.07-7.07 1.06-1.06a5.02 5.02 0 0 0 0-7.07z"/></svg>
+                    Integração com o Telegram
+                </h4>
+                <p>Assim que a queda é validada, o Sentinel envia uma foto em base64 da câmera junto ao alerta para o grupo de supervisores ou familiares através de um Bot do Telegram. O tempo de resposta cai de minutos para poucos segundos.</p>
+            </div>
+
+            <div class="card" style="background: #eff6ff; border-left-color: var(--primary); margin-top: 25px;">
+                <h4>Painel SaaS de Monitoramento</h4>
+                <p>Gráficos consolidados, gerenciamento de câmeras instaladas e temporizadores configuráveis em tempo real. O pequeno empresário tem o controle total de sua frota e dos registros gerados.</p>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div>MÓDULO 06: COMUNICAÇÃO</div>
+            <div class="footer-logo">SENTI<span>NEL</span></div>
+        </div>
+    </div>
+
+</body>
+</html>
