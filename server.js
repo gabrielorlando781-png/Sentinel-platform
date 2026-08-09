@@ -69,20 +69,6 @@ app.use(helmet({
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '2mb' })); // Limite de payload seguro para capturas de webcam
-
-// Desabilita cache estrito para arquivos HTML para evitar que o navegador armazene cache
-// local das páginas do dashboard e login (evitando redirecionamentos infinitos pós-logout)
-app.use((req, res, next) => {
-    const isHtml = req.path.endsWith('.html') || req.path === '/' || req.path === '/dashboard';
-    if (isHtml) {
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-        res.setHeader('Surrogate-Control', 'no-store');
-    }
-    next();
-});
-
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── Rate Limiters (Prevenção de Abuso e Brute-Force) ─────────────────────────
@@ -126,12 +112,20 @@ function signToken(payload) {
 function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'Token ausente.' });
+    
+    // Suporte ao Modo de Teste / Feira de Ciências: 
+    // Se o token estiver ausente, atribui um usuário "Guest" fictício para que a demonstração não pare.
+    if (!token) {
+        req.user = { id: '00000000-0000-0000-0000-000000000000', email: 'guest@sentinel.local', role: 'user' };
+        return next();
+    }
     try {
         req.user = jwt.verify(token, process.env.JWT_SECRET);
         next();
     } catch (err) {
-        return res.status(401).json({ error: 'Token inválido ou expirado.' });
+        // Se o token for inválido/expirado, também cai no fallback de convidado em vez de travar a exibição
+        req.user = { id: '00000000-0000-0000-0000-000000000000', email: 'guest@sentinel.local', role: 'user' };
+        next();
     }
 }
 
@@ -144,26 +138,41 @@ function requireAdmin(req, res, next) {
 async function sendTelegram(alert, userId) {
     if (!process.env.TELEGRAM_BOT_TOKEN) return;
     
-    // Fetch user settings from DB
-    const { data: user, error } = await supabase
-        .from('users')
-        .select('telegram_chat_id, telegram_active, telegram_filters')
-        .eq('id', userId)
-        .single();
+    let targetChatId = process.env.TELEGRAM_CHAT_ID;
+    let active = true;
+    let filters = 'ALL';
 
-    if (error || !user || !user.telegram_active || !user.telegram_chat_id) {
-        console.log(`Telegram skipping for user ${userId}: Active=${user?.telegram_active}, ID=${user?.telegram_chat_id}`);
+    // Tenta carregar as preferências personalizadas do usuário no Supabase
+    if (userId && userId !== '00000000-0000-0000-0000-000000000000') {
+        try {
+            const { data: user } = await supabase
+                .from('users')
+                .select('telegram_chat_id, telegram_active, telegram_filters')
+                .eq('id', userId)
+                .single();
+
+            if (user && user.telegram_chat_id && user.telegram_active) {
+                targetChatId = user.telegram_chat_id;
+                active = user.telegram_active;
+                filters = user.telegram_filters || 'ALL';
+            }
+        } catch (e) {
+            console.warn('[Telegram] Não foi possível carregar as preferências da DB. Usando o chat padrão global do .env.');
+        }
+    }
+
+    if (!targetChatId) {
+        console.log(`[Telegram] Envio cancelado: Nenhum Chat ID configurado no perfil ou no .env.`);
         return;
     }
     
-    // Check filter preferences
-    if (user.telegram_filters && user.telegram_filters !== 'ALL') {
-        const allowedTypes = user.telegram_filters.split(',').map(s => s.trim().toUpperCase());
+    // Validação de filtros
+    if (filters && filters !== 'ALL') {
+        const allowedTypes = filters.split(',').map(s => s.trim().toUpperCase());
         const alertTypeUpperCase = (alert.type || '').toUpperCase();
-        // Check if any of the allowed substrings matches the alert type
         const isAllowed = allowedTypes.some(t => alertTypeUpperCase.includes(t));
         if (!isAllowed) {
-            console.log(`Telegram skipping for user ${userId}: Alert type '${alert.type}' not in filters '${user.telegram_filters}'`);
+            console.log(`[Telegram] Skipped: O tipo de alerta '${alert.type}' foi filtrado pelas preferências.`);
             return;
         }
     }
@@ -171,7 +180,7 @@ async function sendTelegram(alert, userId) {
     const caption = `🚨 *SENTINEL - ALERTA ATIVO*\n\n` +
                     `*Tipo:* ${alert.type}\n` +
                     `*Severidade:* ${alert.severity.toUpperCase()}\n` +
-                    `*Data/Hora:* ${new Date(alert.created_at).toLocaleString('pt-BR')}\n` +
+                    `*Data/Hora:* ${new Date().toLocaleString('pt-BR')}\n` +
                     `*Confiança:* ${alert.confidence}%\n` +
                     `${alert.description ? `*Descrição:* ${alert.description}` : ''}`;
 
@@ -179,9 +188,9 @@ async function sendTelegram(alert, userId) {
     let url;
 
     if (alert.screenshot_url) {
-        url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendPhoto?chat_id=${user.telegram_chat_id}&photo=${encodeURIComponent(alert.screenshot_url)}&caption=${encodedCaption}&parse_mode=Markdown`;
+        url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendPhoto?chat_id=${targetChatId}&photo=${encodeURIComponent(alert.screenshot_url)}&caption=${encodedCaption}&parse_mode=Markdown`;
     } else {
-        url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage?chat_id=${user.telegram_chat_id}&text=${encodedCaption}&parse_mode=Markdown`;
+        url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage?chat_id=${targetChatId}&text=${encodedCaption}&parse_mode=Markdown`;
     }
 
     https.get(url).on('error', (e) => console.error('Telegram Error:', e));
@@ -220,11 +229,6 @@ function sendWebhook(alert) {
     req.write(data);
     req.end();
 }
-
-// ─── Health / Ping Route (Keep Awake) ──────────────────────────────────────────
-app.get('/ping', (req, res) => {
-    res.status(200).json({ status: 'OK', message: 'Sentinel is awake!', timestamp: new Date() });
-});
 
 // ─── Auth Routes ───────────────────────────────────────────────────────────────
 app.post('/api/auth/register', async (req, res) => {
@@ -421,14 +425,17 @@ app.post('/api/alert', authenticateToken, async (req, res) => {
         }
 
         if (dbError) {
-            console.error('DATABASE ERROR:', dbError);
-            throw dbError;
+            console.error('⚠️ DATABASE WARNING (Ignorado para manter a demo ativa):', dbError.message || dbError);
+            // Se o insert falhar (ex: chave estrangeira de usuário Guest inexistente),
+            // criamos o objeto local como fallback para que o Telegram receba o alerta.
+            if (!alert) {
+                alert = alertData;
+                alert.created_at = new Date().toISOString();
+            }
         }
 
-
-
         // Notifications
-        sendTelegram(alert, userId);
+        sendTelegram(alert || alertData, userId);
         sendEmail(alert);
         sendWebhook(alert);
 
@@ -620,21 +627,6 @@ startTelegramPolling();
 
 app.listen(PORT, () => {
     console.log(`SENTINEL Server running at http://localhost:${PORT}`);
-    
-    // Auto-ping de auto-preservação (para não desligar no Render)
-    const renderUrl = process.env.RENDER_EXTERNAL_URL;
-    if (renderUrl) {
-        console.log(`[Keep Awake] Auto-ping configurado para ${renderUrl}/ping a cada 10 minutos.`);
-        setInterval(() => {
-            https.get(`${renderUrl}/ping`, (res) => {
-                console.log(`[Keep Awake] Auto-ping status: ${res.statusCode}`);
-            }).on('error', (err) => {
-                console.error('[Keep Awake] Erro no auto-ping:', err.message);
-            });
-        }, 10 * 60 * 1000); // 10 minutos
-    } else {
-        console.log('[Keep Awake] RENDER_EXTERNAL_URL não encontrada. Para ativar o auto-ping local, configure essa variável.');
-    }
 });
 
 // ─── Telegram Bot Polling ──────────────────────────────────────────────────────

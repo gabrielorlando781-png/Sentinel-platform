@@ -340,7 +340,7 @@
         <div class="filter-spacer"></div>
         <button id="btn-bulk-delete" class="btn-sm" style="display: none; background: var(--danger); border-color: var(--danger); color: white; font-weight: 600; margin-right: 10px;" onclick="deleteSelectedAlerts()">🗑️ EXCLUIR SELECIONADOS (<span id="selected-count">0</span>)</button>
         <button class="btn-primary" onclick="openExportModal()">⬇ EXPORTAR RELATÓRIO</button>
-        <button class="btn-sm" style="color:var(--primary);border-color:var(--primary)" onclick="window.close() || (window.location.href='/?_t=' + Date.now())">◀ VOLTAR (FECHAR DASHBOARD)</button>
+        <button class="btn-sm" style="color:var(--primary);border-color:var(--primary)" onclick="window.close() || (window.location.href='/')">◀ VOLTAR (FECHAR DASHBOARD)</button>
     </div>
 
     <div class="table-wrapper">
@@ -479,7 +479,7 @@
     const token = localStorage.getItem('sentinel_token');
 
     // ── Auth Guard ──────────────────────────────────────────────────────────────
-    if (!token) { location.href = '/?redirect=dashboard'; }
+    if (!token) { location.href = '/'; }
 
     function parseJWT(t) {
         try { return JSON.parse(atob(t.split('.')[1])); } catch { return null; }
@@ -498,7 +498,7 @@
     function doLogout() {
         localStorage.removeItem('sentinel_token');
         localStorage.removeItem('sentinel_user');
-        location.href = '/?_t=' + Date.now();
+        location.href = '/';
     }
 
     // ── Init ─────────────────────────────────────────────────────────────────────
@@ -509,21 +509,7 @@
         // Validate with server
         try {
             const r = await fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + token } });
-            if (!r.ok) {
-                if (r.status === 401 || r.status === 403) {
-                    doLogout();
-                } else {
-                    console.warn('Erro do servidor ao validar sessão:', r.status);
-                    const user = JSON.parse(localStorage.getItem('sentinel_user') || '{}');
-                    isAdmin = user.role === 'admin';
-                    document.getElementById('header-email').textContent = user.email || 'offline';
-                    if (isAdmin) {
-                        document.getElementById('badge-admin').style.display = 'inline-block';
-                        document.getElementById('col-user').style.display = '';
-                    }
-                }
-                return;
-            }
+            if (!r.ok) { doLogout(); return; }
             const user = await r.json();
             isAdmin = user.role === 'admin';
             document.getElementById('header-email').textContent = user.email;
@@ -531,16 +517,7 @@
                 document.getElementById('badge-admin').style.display = 'inline-block';
                 document.getElementById('col-user').style.display = '';
             }
-        } catch (e) {
-            console.error('Erro de rede ao validar sessão:', e);
-            const user = JSON.parse(localStorage.getItem('sentinel_user') || '{}');
-            isAdmin = user.role === 'admin';
-            document.getElementById('header-email').textContent = (user.email || 'offline') + ' (Offline)';
-            if (isAdmin) {
-                document.getElementById('badge-admin').style.display = 'inline-block';
-                document.getElementById('col-user').style.display = '';
-            }
-        }
+        } catch { doLogout(); return; }
 
         // Set default date range (last 30 days)
         const today = new Date();

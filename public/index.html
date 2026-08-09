@@ -580,17 +580,6 @@
         const PHONE_CONFIRM_DELAY = 2000; // ms
         const FALL_POSSIBLE_DELAY = 500; // ms to trigger 'Possible'
         let FALL_CONFIRMED_DELAY = 5000; // default 5s, will be updated by user settings
-        const FALL_ALERT_COOLDOWN_MS = 60000; // 60s de cooldown após alerta de queda disparar
-        const PHONE_SUSTAINED_MS = 5000;      // 5s contínuos de evidência antes de alertar uso de celular
-
-        // Configurações Heurísticas de Postura e Celular
-        const WRIST_HIP_MARGIN = 0.05; // Margem para punho acima do quadril
-        const ELBOW_MIN_ANGLE = 45; // Ângulo mínimo de flexão do cotovelo (graus)
-        const ELBOW_MAX_ANGLE = 130; // Ângulo máximo de flexão do cotovelo (graus)
-        const HEAD_TILT_THRESHOLD = 0.04; // Inclinação da cabeça para frente/baixo
-        const WRIST_STABILITY_VARIANCE = 800; // Variância de estabilidade do punho em pixels^2
-        const SCORE_ALERT_THRESHOLD = 15; // Pontuação limite para disparar o alerta
-        const ALERT_COOLDOWN_MS = 10000; // Cooldown de 10s após alerta disparar
         
         // // STATE
         let state = {
@@ -603,10 +592,8 @@
             phoneInHand: false,
             phoneInHandStartTime: null,
             phoneAlertFired: false,
-            phoneSustainedSince: null,  // timestamp de quando o score pre-alerta foi atingido
             fallTier: 0, // 0 (normal), 1 (possible), 2 (confirmed)
             fallStartTime: null,
-            fallLastAlertTime: 0,       // timestamp do último alerta de queda disparado
             fallAlertFired: false,
             fallConfirmedAlertFired: false,
             lastDetections: [],
@@ -647,26 +634,62 @@
         async function init() {
             if (state.isKiosk) document.oncontextmenu = () => false;
 
+            // Atualiza HUD para mostrar que está inicializando
+            document.getElementById('hud-status').innerHTML = 'CARREGANDO <div class="status-dot" style="background:#ffd700"></div>';
 
             // Load COCO-SSD
             try {
                 cocoModel = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
                 logToPanel("COCO-SSD carregado com sucesso.");
             } catch(e) {
-                logToPanel("Erro ao carregar COCO-SSD. Detecção de celular desativada.");
+                logToPanel("Aviso: COCO-SSD não carregado. Detecção de celular desativada.");
                 document.getElementById('hud-phone').innerText = "INDISPONÍVEL";
             }
 
-            // Enumerate cameras
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoDevices = devices.filter(d => d.kind === 'videoinput');
-            
+            // PASSO CRÍTICO: Pedir permissão de câmera ANTES de enumerar devices.
+            // Navegadores modernos (Chrome, Firefox, Safari) não revelam labels/deviceIds
+            // sem que o usuário já tenha concedido a permissão de câmera.
+            let permissionStream = null;
+            try {
+                permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            } catch(permErr) {
+                const errMsg = permErr.name === 'NotAllowedError' 
+                    ? 'Permissão de câmera NEGADA. Permita o acesso nas configurações do navegador e recarregue a página.'
+                    : `Erro ao acessar câmera: ${permErr.message}`;
+                logToPanel(`❌ ${errMsg}`);
+                document.getElementById('hud-status').innerHTML = 'ERRO DE CÂMERA <div class="status-dot" style="background:#ff4444"></div>';
+                showCameraError(errMsg);
+                return;
+            }
+
+            // Enumerate cameras (agora com permissão, os labels serão corretos)
+            let videoDevices = [];
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                videoDevices = devices.filter(d => d.kind === 'videoinput');
+            } catch(e) {
+                logToPanel("Aviso: não foi possível listar câmeras. Usando câmera padrão.");
+            }
+
+            // Para a stream de permissão temporária (para liberar o recurso)
+            if (permissionStream) {
+                permissionStream.getTracks().forEach(t => t.stop());
+            }
+
             const savedDevice = localStorage.getItem('sentinel_camera');
+
+            // Se encontrou só 1 câmera, ou está em modo kiosk com câmera salva, inicia direto
             if (videoDevices.length === 1 || (state.isKiosk && savedDevice)) {
-                startCamera(savedDevice || videoDevices[0].deviceId);
+                startCamera(savedDevice || (videoDevices[0] && videoDevices[0].deviceId) || null);
+            } else if (videoDevices.length === 0) {
+                // Nenhuma câmera encontrada — tenta iniciar sem deviceId específico
+                logToPanel("Aviso: Nenhuma câmera listada. Tentando iniciar com câmera padrão...");
+                startCamera(null);
             } else {
+                // Múltiplas câmeras — mostra picker
                 const picker = document.getElementById('overlay-picker');
                 const list = document.getElementById('device-list');
+                list.innerHTML = ''; // Limpa lista anterior
                 picker.style.display = 'flex';
                 videoDevices.forEach(d => {
                     const btn = document.createElement('button');
@@ -682,28 +705,73 @@
             }
         }
 
-        function startCamera(deviceId) {
-            pose = new Pose({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-            });
-            pose.setOptions({
-                modelComplexity: 1,
-                smoothLandmarks: true,
-                enableSegmentation: false,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
-            });
-            pose.onResults(onResults);
+        function showCameraError(msg) {
+            const picker = document.getElementById('overlay-picker');
+            const list = document.getElementById('device-list');
+            list.innerHTML = `
+                <div style="background:rgba(255,68,68,0.15); border:1px solid #ff4444; border-radius:10px; padding:20px; margin:10px 0; color:#ff4444; font-size:14px; line-height:1.6;">
+                    <b>⚠️ Não foi possível inicializar o sistema</b><br><br>
+                    ${msg}<br><br>
+                    <button class="device-btn" onclick="location.reload()" style="border-color:#ff4444; color:#ff4444;">🔄 Tentar Novamente</button>
+                </div>
+            `;
+            picker.style.display = 'flex';
+        }
 
-            camera = new Camera(video, {
-                onFrame: async () => {
-                    await pose.send({image: video});
-                },
-                width: 1280,
-                height: 720
-            });
-            camera.start();
-            logToPanel("Sistema iniciado. Monitorando...");
+        async function startCamera(deviceId) {
+            try {
+                pose = new Pose({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+                });
+                pose.setOptions({
+                    modelComplexity: 1,
+                    smoothLandmarks: true,
+                    enableSegmentation: false,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+                pose.onResults(onResults);
+
+                // Constrói as constraints de vídeo
+                const videoConstraints = deviceId 
+                    ? { deviceId: { exact: deviceId }, width: 1280, height: 720 }
+                    : { width: 1280, height: 720 };
+
+                camera = new Camera(video, {
+                    onFrame: async () => {
+                        await pose.send({image: video});
+                    },
+                    width: 1280,
+                    height: 720
+                });
+
+                // Substitui o método de start para usar nossas constraints com deviceId
+                if (deviceId) {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
+                    video.srcObject = stream;
+                    await video.play();
+                    // Loop manual de envio para o MediaPipe
+                    async function poseLoop() {
+                        if (video.readyState >= 2) {
+                            await pose.send({ image: video });
+                        }
+                        requestAnimationFrame(poseLoop);
+                    }
+                    poseLoop();
+                } else {
+                    camera.start();
+                }
+
+                logToPanel("✅ Sistema iniciado. Monitorando...");
+                document.getElementById('hud-status').innerHTML = 'ATIVO <div class="status-dot" style="background:#4caf50"></div>';
+            } catch(err) {
+                const errMsg = `Falha ao iniciar câmera: ${err.message || err.name}`;
+                logToPanel(`❌ ${errMsg}`);
+                document.getElementById('hud-status').innerHTML = 'ERRO <div class="status-dot" style="background:#ff4444"></div>';
+                // Limpa o deviceId salvo para que o próximo carregamento tente novamente
+                localStorage.removeItem('sentinel_camera');
+                showCameraError(errMsg + '<br><br>Dica: verifique se outra aba ou programa está usando a câmera.');
+            }
         }
 
         // // MOVEMENT ENGINE
@@ -786,7 +854,7 @@
                 }
             }
 
-            // PHONE DETECTION (Dense Postural Heuristic + Temporal Score Accumulation)
+            // PHONE DETECTION (every 4 frames)
             if (cocoModel) {
                 state.lastProcessedFrame++;
                 if (state.lastProcessedFrame % 6 === 0) {
@@ -795,247 +863,49 @@
                     lastPhoneDetections = state.lastDetections.filter(d => d.class === 'cell phone');
                 }
 
-                // Initialize wrist history and score accumulator variables in state
-                if (!state.leftWristHistory) state.leftWristHistory = [];
-                if (!state.rightWristHistory) state.rightWristHistory = [];
-                if (state.phoneSuspicionScore === undefined) state.phoneSuspicionScore = 0;
-                if (state.lastPhoneAlertTime === undefined) state.lastPhoneAlertTime = 0;
-                if (state.lastPhoneSeenTime === undefined) state.lastPhoneSeenTime = 0;
+                let phoneInHandFound = false;
+                let phoneSuspected = lastPhoneDetections.length > 0;
 
-                const wristL = landmarks[15];
-                const wristR = landmarks[16];
-                const hipL = landmarks[23];
-                const hipR = landmarks[24];
-                const shoulderL = landmarks[11];
-                const shoulderR = landmarks[12];
-                const elbowL = landmarks[13];
-                const elbowR = landmarks[14];
-                const nose = landmarks[0];
+                lastPhoneDetections.forEach(phone => {
+                    const pad = 0.4;
+                    const bx = phone.bbox[0] - phone.bbox[2]*pad/2;
+                    const by = phone.bbox[1] - phone.bbox[3]*pad/2;
+                    const bw = phone.bbox[2] * (1+pad);
+                    const bh = phone.bbox[3] * (1+pad);
 
-                // Relax visibility thresholds if a phone is detected by COCO-SSD
-                const minVisibility = (lastPhoneDetections && lastPhoneDetections.length > 0) ? 0.20 : 0.35;
+                    // Normalize pose to pixel
+                    const checkWrist = (w) => {
+                        if (w.visibility < 0.5) return false;
+                        const px = w.x * canvas.width;
+                        const py = w.y * canvas.height;
+                        return px >= bx && px <= bx + bw && py >= by && py <= by + bh;
+                    };
 
-                const leftWristVisible = wristL && wristL.visibility > minVisibility;
-                const rightWristVisible = wristR && wristR.visibility > minVisibility;
-                const leftHipVisible = hipL && hipL.visibility > minVisibility;
-                const rightHipVisible = hipR && hipR.visibility > minVisibility;
-                const leftArmValid = shoulderL && elbowL && wristL && 
-                                     shoulderL.visibility > minVisibility && 
-                                     elbowL.visibility > minVisibility && 
-                                     leftWristVisible;
-                const rightArmValid = shoulderR && elbowR && wristR && 
-                                      shoulderR.visibility > minVisibility && 
-                                      elbowR.visibility > minVisibility && 
-                                      rightWristVisible;
-                const noseValid = nose && nose.visibility > minVisibility;
-                const shouldersValid = shoulderL && shoulderR && 
-                                       shoulderL.visibility > minVisibility && 
-                                       shoulderR.visibility > minVisibility;
-
-                // Update wrist position history buffers
-                if (leftWristVisible) {
-                    state.leftWristHistory.push({ x: wristL.x * canvas.width, y: wristL.y * canvas.height });
-                    if (state.leftWristHistory.length > 30) state.leftWristHistory.shift();
-                } else {
-                    state.leftWristHistory = [];
-                }
-
-                if (rightWristVisible) {
-                    state.rightWristHistory.push({ x: wristR.x * canvas.width, y: wristR.y * canvas.height });
-                    if (state.rightWristHistory.length > 30) state.rightWristHistory.shift();
-                } else {
-                    state.rightWristHistory = [];
-                }
-
-                // Helper to calculate joint angle in 2D space (shoulder -> elbow -> wrist)
-                const getJointAngle = (s, e, w) => {
-                    const v1 = { x: s.x - e.x, y: s.y - e.y };
-                    const v2 = { x: w.x - e.x, y: w.y - e.y };
-                    const dot = v1.x * v2.x + v1.y * v2.y;
-                    const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
-                    const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
-                    if (mag1 === 0 || mag2 === 0) return 0;
-                    const cosAngle = Math.max(-1, Math.min(1, dot / (mag1 * mag2)));
-                    return Math.acos(cosAngle) * (180 / Math.PI);
-                };
-
-                // Helper to calculate variance of coordinates (sum of variances of x and y)
-                const getVariance = (history) => {
-                    if (history.length < 30) return Infinity;
-                    let sumX = 0, sumY = 0;
-                    for (let i = 0; i < history.length; i++) {
-                        sumX += history[i].x;
-                        sumY += history[i].y;
+                    if (checkWrist(landmarks[15]) || checkWrist(landmarks[16])) {
+                        phoneInHandFound = true;
                     }
-                    const meanX = sumX / history.length;
-                    const meanY = sumY / history.length;
+                });
+
+                // ADVANCED POSTURAL DETECTION (Inspired by reference images)
+                const posturalScore = analyzePosturalPhoneUsage(landmarks);
+                const combinedPhoneScore = (lastPhoneDetections.length > 0 ? 0.6 : 0) + (posturalScore * 0.4);
+
+                if (combinedPhoneScore > 0.50) {
+                    if (!state.phoneInHandStartTime) state.phoneInHandStartTime = Date.now();
                     
-                    let varX = 0, varY = 0;
-                    for (let i = 0; i < history.length; i++) {
-                        varX += Math.pow(history[i].x - meanX, 2);
-                        varY += Math.pow(history[i].y - meanY, 2);
+                    // Se a postura for muito evidente (Score postural > 0.8), reduz o tempo de confirmação
+                    const dynamicDelay = posturalScore > 0.8 ? 500 : PHONE_CONFIRM_DELAY;
+
+                    if (Date.now() - state.phoneInHandStartTime > dynamicDelay) {
+                        triggerAlert('USO DE CELULAR', ['IA_OBJECT', 'POSTURAL_HEURISTICS'].filter((_,i) => [lastPhoneDetections.length > 0, posturalScore > 0.5][i]));
                     }
-                    return (varX / history.length) + (varY / history.length);
-                };
-
-                // 1. Metric: Wrist above hip (Y-axis is inverted: 0 is top, 1 is bottom)
-                const leftWristAboveHip = leftWristVisible && leftHipVisible && (wristL.y < hipL.y - WRIST_HIP_MARGIN);
-                const rightWristAboveHip = rightWristVisible && rightHipVisible && (wristR.y < hipR.y - WRIST_HIP_MARGIN);
-                const wristAboveHip = leftWristAboveHip || rightWristAboveHip;
-
-                // 2. Metric: Elbow flexion angle
-                const leftAngle = leftArmValid ? getJointAngle(shoulderL, elbowL, wristL) : 0;
-                const rightAngle = rightArmValid ? getJointAngle(shoulderR, elbowR, wristR) : 0;
-                const leftElbowFlexion = leftArmValid && leftAngle >= ELBOW_MIN_ANGLE && leftAngle <= ELBOW_MAX_ANGLE;
-                const rightElbowFlexion = rightArmValid && rightAngle >= ELBOW_MIN_ANGLE && rightAngle <= ELBOW_MAX_ANGLE;
-                const elbowFlexion = leftElbowFlexion || rightElbowFlexion;
-
-                // 3. Metric: Head tilt down (nose y coordinate exceeds shoulder average y plus threshold)
-                const avgShoulderY = shouldersValid ? (shoulderL.y + shoulderR.y) / 2 : 0;
-                const headTiltDown = noseValid && shouldersValid && (nose.y > avgShoulderY + HEAD_TILT_THRESHOLD);
-
-                // 4. Metric: Wrist position stability (variance is low, indicating hand is held still holding phone)
-                const leftVar = leftArmValid ? getVariance(state.leftWristHistory) : Infinity;
-                const rightVar = rightArmValid ? getVariance(state.rightWristHistory) : Infinity;
-                const leftWristStable = leftArmValid && leftVar < WRIST_STABILITY_VARIANCE;
-                const rightWristStable = rightArmValid && rightVar < WRIST_STABILITY_VARIANCE;
-                const wristStable = leftWristStable || rightWristStable;
-
-                // Identify what object is being held based on COCO-SSD detections and active wrists
-                updateHoldingObject(state.lastDetections, wristL, wristR, canvas.width, canvas.height);
-
-                // Calcular referências de escala (altura e quadril)
-                const avgHipY = (leftHipVisible && rightHipVisible) ? (hipL.y + hipR.y) / 2 : (leftHipVisible ? hipL.y : (rightHipVisible ? hipR.y : 0.85));
-                const midTorsoY = avgShoulderY + (avgHipY - avgShoulderY) * 0.55;
-
-                // Limiar escala-invariante: varia com a distância da pessoa à câmera
-                // (shoulderDist pequeno = pessoa longe = threshold menor em coordenadas normalizadas)
-                let maxHandNoseDist = 0.28;
-                if (shouldersValid) {
-                    const shoulderDist = Math.sqrt(Math.pow(shoulderL.x - shoulderR.x, 2) + Math.pow(shoulderL.y - shoulderR.y, 2));
-                    // Threshold: 1.8x a distância dos ombros (funciona perto E longe)
-                    maxHandNoseDist = Math.max(0.08, Math.min(0.45, shoulderDist * 1.8));
-                }
-
-                const leftWristNearFace = leftWristVisible && noseValid && (Math.sqrt(Math.pow(wristL.x - nose.x, 2) + Math.pow(wristL.y - nose.y, 2)) < maxHandNoseDist);
-                const rightWristNearFace = rightWristVisible && noseValid && (Math.sqrt(Math.pow(wristR.x - nose.x, 2) + Math.pow(wristR.y - nose.y, 2)) < maxHandNoseDist);
-                const handNearFace = leftWristNearFace || rightWristNearFace;
-
-                // Verificar se mão está na metade superior do torso (independente de face)
-                const leftHandHigh = leftWristVisible && (wristL.y < midTorsoY);
-                const rightHandHigh = rightWristVisible && (wristR.y < midTorsoY);
-                const handAboveMidTorso = leftHandHigh || rightHandHigh;
-
-                // === EXCLUSÕES DEFINITIVAS — posturas que NÃO são uso de celular ===
-                // 1. Ambos os punhos acima dos ombros ao mesmo tempo → alongamento / exercício
-                const bothWristsAboveShoulder =
-                    shouldersValid &&
-                    leftWristVisible  && (wristL.y < shoulderL.y - 0.02) &&
-                    rightWristVisible && (wristR.y < shoulderR.y - 0.02);
-
-                // 2. Qualquer punho acima do nariz → braço esticado para cima
-                const wristAboveHead =
-                    (leftWristVisible  && noseValid && wristL.y < nose.y - 0.04) ||
-                    (rightWristVisible && noseValid && wristR.y < nose.y - 0.04);
-
-                const exclusionActive = bothWristsAboveShoulder || wristAboveHead;
-
-                // Memória COCO-SSD: se viu celular nos últimos 15s, aceita critério mais relaxado
-                const recentPhoneEvidence = (Date.now() - state.lastPhoneSeenTime) < 15000;
-
-                // Acumulação de score:
-                // - Sem evidência recente de COCO-SSD: exige 3+ métricas (evita falso positivo)
-                // - Com evidência recente de COCO-SSD: basta 2 métricas
-                // - handNearFace confirma: score 2x
-                let metricsActive = 0;
-                let postureScore = 0;
-
-                if (handAboveMidTorso && !exclusionActive) {
-                    if (wristAboveHip) metricsActive++;
-                    if (elbowFlexion)  metricsActive++;
-                    if (headTiltDown)  metricsActive++;
-                    if (wristStable)   metricsActive++;
-
-                    // Gate: mínimo de métricas obrigatórias antes de pontuar
-                    const minRequired = recentPhoneEvidence ? 2 : 3;
-
-                    if (metricsActive >= minRequired) {
-                        if (wristAboveHip) postureScore += handNearFace ? 2.0 : 0.8;
-                        if (elbowFlexion)  postureScore += handNearFace ? 2.0 : 0.8;
-                        if (headTiltDown)  postureScore += handNearFace ? 2.0 : 1.0;
-                        if (wristStable)   postureScore += handNearFace ? 2.0 : 0.8;
-                    }
-                }
-
-                const isHoldingPhone = state.holdingObject === 'Celular';
-                const isPhoneDetected = lastPhoneDetections && lastPhoneDetections.length > 0;
-                const now = Date.now();
-                const cooldownActive = state.lastPhoneAlertTime && (now - state.lastPhoneAlertTime < ALERT_COOLDOWN_MS);
-
-                if (cooldownActive) {
-                    state.phoneSuspicionScore = 0;
                 } else {
-                    // Acumulação temporal: adiciona postureScore por frame, decai se sem métricas
-                    if (postureScore > 0) {
-                        state.phoneSuspicionScore += postureScore;
-                    } else {
-                        // Decaimento: -1.5 por frame se nenhuma métrica ativa
-                        state.phoneSuspicionScore = Math.max(0, state.phoneSuspicionScore - 1.5);
-                    }
-
-                    // COCO-SSD detecção de celular: bônus imediato + atualiza memória
-                    if (isPhoneDetected) {
-                        state.phoneSuspicionScore += 5;
-                        state.lastPhoneSeenTime = Date.now(); // memória de 15s
-                    }
-
-                    // Holding object = celular confirmado pelo COCO-SSD + proximidade de pulso
-                    if (isHoldingPhone) {
-                        state.phoneSuspicionScore += 10;
-                    }
-
-                    // Cap máximo
-                    state.phoneSuspicionScore = Math.min(30, state.phoneSuspicionScore);
-                }
-
-                // Disparar alerta se score atingiu o limiar E 20s contínuos se passaram
-                // PRE-LIMIAR: score >= 8 dá início ao timer de 20s
-                const PRE_THRESHOLD = 8;
-                if (!cooldownActive && state.phoneSuspicionScore >= PRE_THRESHOLD) {
-                    if (!state.phoneSustainedSince) {
-                        state.phoneSustainedSince = Date.now(); // início do timer
-                    }
-                    const sustainedMs = Date.now() - state.phoneSustainedSince;
-
-                    if (sustainedMs >= PHONE_SUSTAINED_MS && state.phoneSuspicionScore >= SCORE_ALERT_THRESHOLD) {
-                        const activeModules = [];
-                        if (wristAboveHip) activeModules.push('WRIST_ABOVE_HIP');
-                        if (elbowFlexion)  activeModules.push('ELBOW_FLEXION');
-                        if (headTiltDown)  activeModules.push('HEAD_TILT');
-                        if (wristStable)   activeModules.push('WRIST_STABILITY');
-                        if (handNearFace)  activeModules.push('HAND_NEAR_FACE');
-                        if (isPhoneDetected) activeModules.push('COCO_SSD');
-                        if (isHoldingPhone)  activeModules.push('HOLDING_OBJECT');
-
-                        triggerAlert('USO DE CELULAR', activeModules);
-                        state.phoneSuspicionScore = 0;
-                        state.phoneSustainedSince = null;
-                        state.lastPhoneAlertTime = Date.now();
-                    }
-                } else if (!cooldownActive) {
-                    // Score caiu abaixo do pré-limiar — reinicia o timer
-                    state.phoneSustainedSince = null;
-                }
-
-                // Resolver alerta: requer ausência total de evidências
-                if (metricsActive === 0 && !isHoldingPhone && !isPhoneDetected) {
+                    state.phoneInHandStartTime = null;
                     resolveAlert('USO DE CELULAR');
-                    state.phoneSustainedSince = null; // garante reset do timer
                 }
-
-                // Atualizar variáveis de estado para HUD e overlay visual
-                state.phoneInHand = (state.phoneSuspicionScore >= SCORE_ALERT_THRESHOLD) || (metricsActive >= 2) || (isPhoneDetected && metricsActive >= 1) || isHoldingPhone;
-                state.phoneDetected = (state.phoneSuspicionScore >= 5) || (metricsActive >= 1) || isPhoneDetected || isHoldingPhone;
+                
+                state.phoneInHand = phoneInHandFound || posturalScore > 0.7;
+                state.phoneDetected = phoneSuspected || posturalScore > 0.5;
             }
 
             // FALL DETECTION (Multi-Detector V4)
@@ -1045,26 +915,19 @@
             if (fallEvaluation > 0) {
                 if (!state.fallStartTime) state.fallStartTime = Date.now();
                 const fallElapsed = Date.now() - state.fallStartTime;
-                const fallCooldownActive = (Date.now() - state.fallLastAlertTime) < FALL_ALERT_COOLDOWN_MS;
 
                 // Queda Crítica (Detector Score >= 0.9): Disparo quase instantâneo (0.1s)
                 if (fallEvaluation === 2 || fallElapsed >= FALL_CONFIRMED_DELAY) {
-                    if (state.fallTier !== 2 && !fallCooldownActive) {
+                    if (state.fallTier !== 2) {
                         state.fallTier = 2;
-                        state.fallLastAlertTime = Date.now();
                         triggerAlert('QUEDA CONFIRMADA', ['CRITICAL_SCORE', 'STABILITY_>5S']);
-                    } else if (state.fallTier !== 2) {
-                        state.fallTier = 2; // atualiza tier sem re-disparar
                     }
                 } 
                 // Queda Suspeita (Detector Score >= 0.5): Requer 0.5s de estabilidade
                 else if (fallElapsed >= 500) {
-                    if (state.fallTier !== 1 && !fallCooldownActive) {
+                    if (state.fallTier !== 1) {
                         state.fallTier = 1;
-                        state.fallLastAlertTime = Date.now();
                         triggerAlert('POSSÍVEL QUEDA', ['MULTI_DETECTOR_V4', 'SUSPICIOUS_POSTURE']);
-                    } else if (state.fallTier !== 1) {
-                        state.fallTier = 1; // atualiza tier sem re-disparar
                     }
                 }
             } else {
@@ -1072,57 +935,6 @@
                 state.fallStartTime = null;
                 resolveAlert('POSSÍVEL QUEDA');
                 resolveAlert('QUEDA CONFIRMADA');
-            }
-        }
-
-        function updateHoldingObject(detections, wristL, wristR, canvasWidth, canvasHeight) {
-            state.holdingObject = null;
-            state.holdingObjectConfidence = 0;
-            
-            if (!detections || detections.length === 0) return;
-            
-            const checkWristProximity = (wrist, bbox) => {
-                if (!wrist) return false;
-                const wx = wrist.x * canvasWidth;
-                const wy = wrist.y * canvasHeight;
-                const [bx, by, bw, bh] = bbox;
-                const margin = 50;
-                return (wx >= bx - margin && wx <= bx + bw + margin &&
-                        wy >= by - margin && wy <= by + bh + margin);
-            };
-            
-            const handheldClasses = ['cell phone', 'cup', 'bottle', 'book', 'remote', 'mouse', 'scissors', 'handbag', 'banana', 'apple', 'orange'];
-            
-            const closeDetections = detections.filter(d => {
-                if (!handheldClasses.includes(d.class)) return false;
-                const nearLeft = wristL && wristL.visibility > 0.35 && checkWristProximity(wristL, d.bbox);
-                const nearRight = wristR && wristR.visibility > 0.35 && checkWristProximity(wristR, d.bbox);
-                return nearLeft || nearRight;
-            });
-            
-            if (closeDetections.length > 0) {
-                closeDetections.sort((a, b) => b.score - a.score);
-                const best = closeDetections[0];
-                
-                const translateClass = (cls) => {
-                    const dict = {
-                        'cell phone': 'Celular',
-                        'cup': 'Copo',
-                        'bottle': 'Garrafa',
-                        'book': 'Livro',
-                        'remote': 'Controle Remoto',
-                        'mouse': 'Mouse',
-                        'scissors': 'Tesoura',
-                        'handbag': 'Bolsa',
-                        'banana': 'Banana',
-                        'apple': 'Maçã',
-                        'orange': 'Laranja'
-                    };
-                    return dict[cls] || cls.toUpperCase();
-                };
-                
-                state.holdingObject = translateClass(best.class);
-                state.holdingObjectConfidence = Math.round(best.score * 100);
             }
         }
 
@@ -1425,49 +1237,6 @@
                     ctx.stroke();
                 }
             }
-
-            // Draw holding object badge if active
-            if (state.holdingObject && state.lastPoseLandmarks) {
-                const l = state.lastPoseLandmarks;
-                const wristL = l[15];
-                const wristR = l[16];
-                
-                // Choose the hand that is active/visible (relaxed threshold 0.20)
-                let activeWrist = null;
-                if (wristL && wristL.visibility > 0.20 && wristR && wristR.visibility > 0.20) {
-                    // Choose the higher wrist (smaller y coordinate)
-                    activeWrist = wristL.y < wristR.y ? wristL : wristR;
-                } else if (wristL && wristL.visibility > 0.20) {
-                    activeWrist = wristL;
-                } else if (wristR && wristR.visibility > 0.20) {
-                    activeWrist = wristR;
-                }
-                
-                if (activeWrist) {
-                    const wx = activeWrist.x * canvas.width;
-                    const wy = activeWrist.y * canvas.height;
-                    
-                    ctx.fillStyle = 'rgba(255, 110, 0, 0.85)';
-                    const text = `Segurando: ${state.holdingObject} (${state.holdingObjectConfidence}%)`;
-                    ctx.font = 'bold 12px Outfit';
-                    const textWidth = ctx.measureText(text).width;
-                    const rectW = textWidth + 16;
-                    const rectH = 22;
-                    const rectX = wx - rectW / 2;
-                    const rectY = wy - 30;
-                    
-                    ctx.beginPath();
-                    if (ctx.roundRect) {
-                        ctx.roundRect(rectX, rectY, rectW, rectH, 6);
-                        ctx.fill();
-                    } else {
-                        ctx.fillRect(rectX, rectY, rectW, rectH);
-                    }
-                    
-                    ctx.fillStyle = '#ffffff';
-                    ctx.fillText(text, rectX + 8, rectY + 15);
-                }
-            }
         }
 
         function updateHUDState() {
@@ -1500,34 +1269,8 @@
             else fallEl.innerHTML = `NORMAL ●`;
 
             const objectsEl = document.getElementById('hud-objects');
-            let objsText = 'NENHUM';
-            const uniqueObjs = [...new Set(state.lastDetections.map(d => {
-                const cls = d.class.toLowerCase();
-                const translate = {
-                    'cell phone': 'CELULAR',
-                    'cup': 'COPO',
-                    'bottle': 'GARRAFA',
-                    'book': 'LIVRO',
-                    'remote': 'CONTROLE REMOTO',
-                    'mouse': 'MOUSE',
-                    'scissors': 'TESOURA',
-                    'handbag': 'BOLSA',
-                    'banana': 'BANANA',
-                    'apple': 'MAÇÃ',
-                    'orange': 'LARANJA'
-                };
-                const name = translate[cls] || cls.toUpperCase();
-                if (state.holdingObject && state.holdingObject.toUpperCase() === name) {
-                    return `${name} (SEGURANDO)`;
-                }
-                return name;
-            }))];
-            if (uniqueObjs.length > 0) {
-                objsText = uniqueObjs.join(', ');
-            } else if (state.holdingObject) {
-                objsText = `${state.holdingObject.toUpperCase()} (SEGURANDO)`;
-            }
-            objectsEl.innerText = objsText;
+            const uniqueObjs = [...new Set(state.lastDetections.map(d => d.class))];
+            objectsEl.innerText = uniqueObjs.length > 0 ? uniqueObjs.join(', ').toUpperCase() : 'NENHUM';
         }
 
         function formatMs(ms) {
@@ -1630,22 +1373,9 @@
                 console.log(`[INIT] Tempo de detecção de queda definido para: ${user.detection_timer}s`);
             }
 
-            // Check if there is a pending redirect
-            const urlParams = new URLSearchParams(window.location.search);
-            if (urlParams.get('redirect') === 'dashboard') {
-                location.href = '/dashboard?_t=' + Date.now();
-                return;
-            }
-
             document.getElementById('auth-modal').style.display = 'none';
             document.getElementById('user-header').style.display = 'flex';
             document.getElementById('header-user-name').textContent = user.name || user.email;
-            
-            // Set dynamic cache-buster for dashboard link
-            const dashboardLink = document.getElementById('link-dashboard');
-            if (dashboardLink) {
-                dashboardLink.href = '/dashboard?_t=' + Date.now();
-            }
             init();
         }
 
@@ -1671,17 +1401,10 @@
                 document.getElementById('auth-modal').style.display = 'flex';
                 return;
             }
-            
             // Validate token by calling /api/me
             fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + token } })
                 .then(r => {
-                    if (!r.ok) {
-                        // Only throw 'invalid' if it's an explicit auth failure (401/403)
-                        if (r.status === 401 || r.status === 403) {
-                            throw new Error('invalid');
-                        }
-                        throw new Error('network_or_server_error');
-                    }
+                    if (!r.ok) throw new Error('invalid');
                     return r.json();
                 })
                 .then(user => {
@@ -1694,36 +1417,12 @@
                     document.getElementById('auth-modal').style.display = 'none';
                     document.getElementById('user-header').style.display = 'flex';
                     document.getElementById('header-user-name').textContent = user.name || user.email;
-                    
-                    // Set dynamic cache-buster for dashboard link
-                    const dashboardLink = document.getElementById('link-dashboard');
-                    if (dashboardLink) {
-                        dashboardLink.href = '/dashboard?_t=' + Date.now();
-                    }
                     init();
                 })
-                .catch(err => {
-                    if (err.message === 'invalid') {
-                        // Token is explicitly invalid or expired
-                        localStorage.removeItem('sentinel_token');
-                        localStorage.removeItem('sentinel_user');
-                        document.getElementById('auth-modal').style.display = 'flex';
-                    } else {
-                        // Transient network error or server error (e.g. Render spin-up/cold start)
-                        // Do NOT wipe the local token, let the user stay logged in offline/cached
-                        console.warn('Falha temporária ao validar sessão:', err);
-                        const cachedUser = JSON.parse(localStorage.getItem('sentinel_user') || '{}');
-                        document.getElementById('auth-modal').style.display = 'none';
-                        document.getElementById('user-header').style.display = 'flex';
-                        document.getElementById('header-user-name').textContent = (cachedUser.name || cachedUser.email || "Usuário") + " (Offline)";
-                        
-                        // Set dynamic cache-buster for dashboard link
-                        const dashboardLink = document.getElementById('link-dashboard');
-                        if (dashboardLink) {
-                            dashboardLink.href = '/dashboard?_t=' + Date.now();
-                        }
-                        init();
-                    }
+                .catch(() => {
+                    localStorage.removeItem('sentinel_token');
+                    localStorage.removeItem('sentinel_user');
+                    document.getElementById('auth-modal').style.display = 'flex';
                 });
         };
     </script>
