@@ -539,8 +539,8 @@
             <input type="range" id="config-phone-delay" min="500" max="5000" step="100" value="2000" style="width:100%; accent-color:var(--primary); cursor:pointer;" oninput="updatePhoneDelayConfig(this.value)">
         </div>
         <div class="hud-item" style="margin-top:8px; border-top:1px solid rgba(255,255,255,0.08); padding-top:8px; flex-direction:column; align-items:flex-start; gap:4px;">
-            <span style="font-size:11px; color:#ff9800; font-weight:bold;">🔔 ALERTA INATIVIDADE: <span id="idle-delay-val">15</span>s</span>
-            <input type="range" id="config-idle-delay" min="5" max="120" step="5" value="15" style="width:100%; accent-color:#ff9800; cursor:pointer;" oninput="updateIdleDelayConfig(this.value)">
+            <span style="font-size:11px; color:#ff9800; font-weight:bold;">🔔 ALERTA INATIVIDADE: <span id="idle-delay-val">10</span>s</span>
+            <input type="range" id="config-idle-delay" min="5" max="120" step="5" value="10" style="width:100%; accent-color:#ff9800; cursor:pointer;" oninput="updateIdleDelayConfig(this.value)">
         </div>
         <div class="hud-item" style="margin-top:5px; border-top:1px solid rgba(255,255,255,0.05); padding-top:5px;">
             <span>ALERTAS HOJE:</span>
@@ -571,7 +571,7 @@
     <script>
         // // CONSTANTS & CONFIG
         const IDLE_THRESHOLD = 0.035; // Aumentado para exigir movimentos mais "radicais"
-        let IDLE_ALERT_DELAY = parseInt(localStorage.getItem('sentinel_idle_delay')) || 15; // seconds
+        let IDLE_ALERT_DELAY = parseInt(localStorage.getItem('sentinel_idle_delay')) || 10; // seconds
         const ABSENCE_DELAY = 5; // seconds
         let PHONE_CONFIRM_DELAY = parseInt(localStorage.getItem('sentinel_phone_delay')) || 2000; // ms (configurável)
         const FALL_POSSIBLE_DELAY = 500; // ms to trigger 'Possible'
